@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PRIYA
 
-## Getting Started
+**P**ersonalized **R**elational **I**ntelligence, **Y**our **A**lly — a warm AI
+companion that helps adults reflect, get some clarity, and pick a realistic next
+step. Text and voice.
 
-First, run the development server:
+> PRIYA is not a therapist, not a crisis service, and not a substitute for the
+> people in someone's life. It says so, out loud, when that matters.
+
+## Status
+
+Phase 1 (text companion) and Phase 2 (voice) are built. The WebRTC audio loop
+needs a browser click-test; everything server-side is verified.
+
+## Running it
 
 ```bash
+npm install
+cp .env.example .env.local   # then add your OpenAI key
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## How it fits together
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+app/
+  page.tsx                        text + voice UI, one shared conversation
+  api/chat/route.ts               text turn: moderate -> generate
+  api/moderate/route.ts           safety gate for voice transcripts
+  api/realtime/session/route.ts   mints ephemeral WebRTC tokens
+components/
+  VoiceCall.tsx                   WebRTC session, VAD states, interruption
+  MemoryPanel.tsx                 approve / edit / delete what PRIYA remembers
+  VoiceSettings.tsx               voice, pace, warmth, directness, energy…
+  CrisisPanel.tsx                 on-screen crisis resources
+lib/
+  priya-prompt.ts                 personality, voice, and boundaries
+  safety.ts                       one classifier shared by text and voice
+  conversation-store.ts           shared conversation state (localStorage)
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### The four modes
 
-## Learn More
+`listen` · `understand` · `similar` · `plan` — each changes how PRIYA responds.
+Selecting **plan** counts as consent to receive advice; the other modes ask
+first.
 
-To learn more about Next.js, take a look at the following resources:
+### Safety
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Every user message is classified before PRIYA answers. `self-harm/intent` or
+`self-harm/instructions` routes to a crisis response instead of an ordinary
+one, and the resources render on screen as well as being spoken — someone
+distressed will not retain a number they heard once.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Voice uses a direct browser-to-OpenAI connection, so its gate is **reactive**:
+moderation runs on transcripts as they land and cuts PRIYA off, but she may
+already have spoken a sentence. The realtime instructions carry their own
+crisis handling to cover that window. The text path still gates before
+generating.
 
-## Deploy on Vercel
+### Memory
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Nothing is stored without an explicit press. The user sees the exact text
+first, and can edit or delete it. Only approved memories are ever sent to the
+model.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Not built yet
+
+Supabase persistence (conversations currently live in `localStorage`), feedback
+ratings, PRIYA proposing her own memories, and the optional voice features —
+voice notes, guided reflection, interview practice, check-ins.
