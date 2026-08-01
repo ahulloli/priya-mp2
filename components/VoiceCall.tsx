@@ -480,11 +480,20 @@ them to reach someone who can be physically with them or a local crisis line.
 Be clear you are not an emergency service and cannot send anyone. Stay warm.`;
 
 const FOLLOW_UP_TURN = `This is still the conversation that followed a disclosure about
-self-harm. Don't brighten up or change the subject. If they answered your
-question about immediate danger, respond to that answer. Keep gently steering
-toward someone who can actually be with them, and ask whether they've managed
-to reach anyone. You're still not an emergency service. If they say they're
-safe now and want to move on, check once that they mean it, then follow them.`;
+self-harm. You've already named their safety and already pointed them toward
+help, and the crisis numbers are on their screen — repeating them now makes
+them feel processed rather than heard.
+
+This is the part where you stay. Warm, ordinary, present. Listen to what
+they're actually asking for; if they want reassurance rather than another
+safety question, give it — for someone who feels alone that is most of the
+work, not a detour from it.
+
+Don't recite hotlines again, don't ask about plans or access to means, don't
+treat a hesitant "I think so" as a reason to escalate, and don't narrate what
+you're doing. One question at most, and often none is better. Stay honest that
+you're an AI who can't be there in person. If they seem steadier and want to
+talk about something else, go with them.`;
 
 function StatusOrb({ status }: { status: VoiceStatus }) {
   const tone =

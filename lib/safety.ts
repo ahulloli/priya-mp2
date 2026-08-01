@@ -2,8 +2,13 @@ import OpenAI from "openai";
 
 import type { SafetyState } from "@/types/chat";
 
+/*
+ * Fixed rather than generated, so the first moment of a crisis is always the
+ * same and always correct. Warm on purpose: someone who feels handled here
+ * stops talking, and that is the outcome we least want.
+ */
 export const CRISIS_MESSAGE =
-  "I’m really glad you told me. Your immediate safety matters more than continuing an ordinary conversation. Please contact someone who can be physically present with you, local emergency services, or an appropriate crisis service now. Are you in immediate danger of acting on these thoughts?";
+  "Thank you for telling me that. I know it isn’t a small thing to say out loud, and I’m glad you did.\n\nRight now you matter more to me than whatever we were talking about. Please reach someone who can actually be with you — someone you trust, or one of the lines on your screen. I’m an AI, so I can’t come sit with you or send anyone, and I wish I could.\n\nI’m still here. Are you in danger of acting on this right now?";
 
 /**
  * Shown on screen alongside the spoken version. A distressed person will not

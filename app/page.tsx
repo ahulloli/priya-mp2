@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 
 import CrisisPanel from "@/components/CrisisPanel";
 import FeedbackPanel from "@/components/FeedbackPanel";
+import FormattedText from "@/components/FormattedText";
 import MemoryPanel from "@/components/MemoryPanel";
 import VoiceCall from "@/components/VoiceCall";
 import VoiceSettings from "@/components/VoiceSettings";
@@ -227,9 +228,7 @@ export default function HomePage() {
                       : "bg-stone-100 text-stone-900"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap leading-7">
-                    {message.content}
-                  </p>
+                  <FormattedText content={message.content} />
                 </div>
 
                 <div
