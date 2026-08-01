@@ -22,7 +22,13 @@ const requestSchema = z.object({
       }),
     )
     .min(1)
-    .max(30),
+    /*
+     * Not a conversation limit — conversations are not capped. This only
+     * stops a malformed or hostile request from posting an unbounded body,
+     * and sits far above any real conversation. A validation failure here
+     * would wedge the user permanently, since every retry is longer.
+     */
+    .max(2000),
   memories: z.array(z.string().max(500)).max(20).optional(),
   userId: z.string().max(200).optional(),
   previousSafetyState: z
@@ -78,10 +84,11 @@ export async function POST(request: Request) {
     }
 
     /*
-     * Only send the most recent turns during the prototype.
-     * This helps control cost and keeps the context focused.
+     * The whole conversation goes to the model, so PRIYA doesn't quietly
+     * forget how it started. Cost grows with length; summarising older turns
+     * is the fix when that starts to matter, not truncation.
      */
-    const recentMessages = messages.slice(-16);
+    const recentMessages = messages;
 
     /*
      * The turn after a disclosure is still part of it. Dropping back into

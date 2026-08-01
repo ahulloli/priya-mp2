@@ -148,6 +148,12 @@ export default function HomePage() {
         setPendingMemory(data.suggestMemory);
       }
     } catch (caughtError) {
+      /*
+       * Take the message back out. Leaving a failed send in the record stacks
+       * up unanswered user turns and makes every retry a longer request.
+       */
+      updateConversation((current) => ({ ...current, messages }));
+      setInput(cleanInput);
       setError(
         caughtError instanceof Error
           ? caughtError.message
