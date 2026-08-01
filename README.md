@@ -52,20 +52,30 @@ Every user message is classified before PRIYA answers. `self-harm/intent` or
 one, and the resources render on screen as well as being spoken — someone
 distressed will not retain a number they heard once.
 
-Voice uses a direct browser-to-OpenAI connection, so its gate is **reactive**:
-moderation runs on transcripts as they land and cuts PRIYA off, but she may
-already have spoken a sentence. The realtime instructions carry their own
-crisis handling to cover that window. The text path still gates before
-generating.
+Voice uses a direct browser-to-OpenAI connection, but the realtime session sets
+`create_response: false`, so PRIYA does not answer when the user stops
+speaking. The client moderates the finished transcript and only then sends
+`response.create`. Nothing is ever spoken before classification, and a failed
+safety check leaves the turn unanswered rather than failing open. Barge-in
+still works via `interrupt_response: true`.
+
+A high-risk turn sets a conversation-level state that survives later turns and
+refreshes, so the turns after a disclosure continue it rather than resetting to
+ordinary chat.
 
 ### Memory
 
-Nothing is stored without an explicit press. The user sees the exact text
-first, and can edit or delete it. Only approved memories are ever sent to the
-model.
+PRIYA proposes at most one durable detail per turn — an upcoming event, a
+long-term goal, an ongoing challenge — running alongside the reply so it costs
+no latency. Passing emotions, credentials, and sensitive categories are never
+proposed. A proposal is only a proposal: nothing is stored without an explicit
+press, and the user sees the exact text first and can edit or delete it.
 
 ## Not built yet
 
-Supabase persistence (conversations currently live in `localStorage`), feedback
-ratings, PRIYA proposing her own memories, and the optional voice features —
-voice notes, guided reflection, interview practice, check-ins.
+Supabase persistence — conversations, memories, feedback, and reports all
+currently live in `localStorage`, which is fine for solo testing but not for an
+invite-only beta. Also unbuilt: the optional voice features (voice notes,
+guided reflection, interview practice, check-ins).
+
+The WebRTC audio loop has not been exercised in a browser.

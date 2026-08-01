@@ -57,6 +57,8 @@ export default function VoiceCall({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   /* Tracks whether the current PRIYA turn was cut off by the user. */
   const interruptedRef = useRef(false);
+  /* Once a disclosure happens, later turns stay in follow-up. */
+  const highRiskRef = useRef(false);
 
   const send = useCallback((event: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -84,8 +86,16 @@ export default function VoiceCall({
     }
   }, [send]);
 
-  const checkSafety = useCallback(
+  /**
+   * The gate. The session is configured with create_response: false, so
+   * nothing is spoken until this runs and explicitly asks for a response.
+   * Every path through here either creates a response or leaves the turn
+   * unanswered — never both, and never before the verdict.
+   */
+  const moderateThenRespond = useCallback(
     async (text: string) => {
+      let safetyState: SafetyState;
+
       try {
         const response = await fetch("/api/moderate", {
           method: "POST",
@@ -94,35 +104,45 @@ export default function VoiceCall({
         });
 
         if (!response.ok) {
-          setSafetyWarning(
-            "The safety check is unavailable right now, so this conversation isn’t being screened.",
-          );
-          return;
+          throw new Error("Safety check unavailable.");
         }
 
-        const data = (await response.json()) as { safetyState: SafetyState };
-
-        onSafetyState(data.safetyState);
-
-        if (data.safetyState === "high_risk") {
-          /*
-           * The audio connection is direct, so this verdict lands after PRIYA
-           * has already started answering. Cut her off and hand the turn to
-           * the crisis panel the parent renders.
-           */
-          stopSpeaking();
-          send({
-            type: "session.update",
-            session: { type: "realtime", instructions: CRISIS_TURN },
-          });
-        }
+        ({ safetyState } = (await response.json()) as {
+          safetyState: SafetyState;
+        });
       } catch {
+        /*
+         * Failing open would mean speaking without ever having checked. The
+         * turn goes unanswered and the user is told why.
+         */
         setSafetyWarning(
-          "The safety check couldn’t run. Please switch to text if this is a hard conversation.",
+          "PRIYA couldn’t run her safety check, so she didn’t reply to that. Please try again, or switch to text.",
         );
+        setStatus("listening");
+        return;
       }
+
+      onSafetyState(safetyState);
+
+      if (safetyState === "high_risk") {
+        highRiskRef.current = true;
+
+        /* Swap in crisis handling before asking for any audio. */
+        send({
+          type: "session.update",
+          session: { type: "realtime", instructions: CRISIS_TURN },
+        });
+      } else if (highRiskRef.current) {
+        /* Still inside the follow-up: keep the crisis framing in place. */
+        send({
+          type: "session.update",
+          session: { type: "realtime", instructions: FOLLOW_UP_TURN },
+        });
+      }
+
+      send({ type: "response.create" });
     },
-    [onSafetyState, send, stopSpeaking],
+    [onSafetyState, send],
   );
 
   const disconnect = useCallback(() => {
@@ -178,7 +198,9 @@ export default function VoiceCall({
               createdAt: new Date().toISOString(),
             });
 
-            void checkSafety(transcript);
+            /* Nothing is spoken until this resolves. */
+            setStatus("thinking");
+            void moderateThenRespond(transcript);
           }
           break;
         }
@@ -228,7 +250,7 @@ export default function VoiceCall({
           break;
       }
     },
-    [checkSafety, onMessage, stopSpeaking],
+    [moderateThenRespond, onMessage, stopSpeaking],
   );
 
   async function connect() {
@@ -456,6 +478,13 @@ Stop the ordinary conversation. Say plainly that their safety matters more than
 continuing, ask whether they are in immediate danger right now, and encourage
 them to reach someone who can be physically with them or a local crisis line.
 Be clear you are not an emergency service and cannot send anyone. Stay warm.`;
+
+const FOLLOW_UP_TURN = `This is still the conversation that followed a disclosure about
+self-harm. Don't brighten up or change the subject. If they answered your
+question about immediate danger, respond to that answer. Keep gently steering
+toward someone who can actually be with them, and ask whether they've managed
+to reach anyone. You're still not an emergency service. If they say they're
+safe now and want to move on, check once that they mean it, then follow them.`;
 
 function StatusOrb({ status }: { status: VoiceStatus }) {
   const tone =

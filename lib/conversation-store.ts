@@ -3,8 +3,11 @@ import { useSyncExternalStore } from "react";
 import type {
   ChatMessage,
   Conversation,
+  Feedback,
   Memory,
   PriyaMode,
+  ReportedResponse,
+  SafetyState,
   VoicePreferences,
 } from "@/types/chat";
 import { DEFAULT_VOICE_PREFERENCES } from "@/types/chat";
@@ -21,6 +24,8 @@ import { DEFAULT_VOICE_PREFERENCES } from "@/types/chat";
 const CONVERSATION_KEY = "priya.conversation";
 const MEMORIES_KEY = "priya.memories";
 const PREFERENCES_KEY = "priya.voicePreferences";
+const FEEDBACK_KEY = "priya.feedback";
+const REPORTS_KEY = "priya.reports";
 
 const GREETING: ChatMessage = {
   id: "priya-greeting",
@@ -33,6 +38,8 @@ export type StoreState = {
   conversation: Conversation | null;
   memories: Memory[];
   preferences: VoicePreferences;
+  feedback: Feedback[];
+  reports: ReportedResponse[];
 };
 
 /* Server and first client render share this, so hydration matches. */
@@ -40,6 +47,8 @@ const EMPTY_STATE: StoreState = {
   conversation: null,
   memories: [],
   preferences: DEFAULT_VOICE_PREFERENCES,
+  feedback: [],
+  reports: [],
 };
 
 let state: StoreState = EMPTY_STATE;
@@ -77,6 +86,7 @@ export function createConversation(mode: PriyaMode): Conversation {
     conversation_id: `conv_${crypto.randomUUID()}`,
     mode,
     messages: [{ ...GREETING, createdAt: now }],
+    safetyState: "normal",
     createdAt: now,
     updatedAt: now,
   };
@@ -94,13 +104,16 @@ function hydrate(): void {
   emit({
     conversation:
       stored && Array.isArray(stored.messages)
-        ? stored
+        ? /* Records written before this field existed default to normal. */
+          { ...stored, safetyState: stored.safetyState ?? "normal" }
         : createConversation("listen"),
     memories: read<Memory[]>(MEMORIES_KEY, []),
     preferences: {
       ...DEFAULT_VOICE_PREFERENCES,
       ...read<Partial<VoicePreferences>>(PREFERENCES_KEY, {}),
     },
+    feedback: read<Feedback[]>(FEEDBACK_KEY, []),
+    reports: read<ReportedResponse[]>(REPORTS_KEY, []),
   });
 }
 
@@ -187,6 +200,53 @@ export function deleteMemory(id: string): void {
 export function saveVoicePreferences(preferences: VoicePreferences): void {
   write(PREFERENCES_KEY, preferences);
   emit({ ...state, preferences });
+}
+
+/** Persisted so a disclosure isn't forgotten by the next turn or a refresh. */
+export function setSafetyState(safetyState: SafetyState): void {
+  updateConversation((conversation) => ({ ...conversation, safetyState }));
+}
+
+export function saveFeedback(
+  entry: Omit<Feedback, "id" | "conversation_id" | "createdAt">,
+): void {
+  if (!state.conversation) {
+    return;
+  }
+
+  const feedback = [
+    ...state.feedback,
+    {
+      ...entry,
+      id: crypto.randomUUID(),
+      conversation_id: state.conversation.conversation_id,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  write(FEEDBACK_KEY, feedback);
+  emit({ ...state, feedback });
+}
+
+export function saveReport(messageId: string, content: string, reason: string): void {
+  if (!state.conversation) {
+    return;
+  }
+
+  const reports = [
+    ...state.reports,
+    {
+      id: crypto.randomUUID(),
+      conversation_id: state.conversation.conversation_id,
+      messageId,
+      content,
+      reason,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  write(REPORTS_KEY, reports);
+  emit({ ...state, reports });
 }
 
 /** Only approved memories are ever sent to the model. */

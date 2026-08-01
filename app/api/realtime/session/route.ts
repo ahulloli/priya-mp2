@@ -68,7 +68,14 @@ export async function POST(request: Request) {
                   type: "server_vad",
                   threshold: 0.5,
                   silence_duration_ms: preferences.silenceMs,
-                  /* Let the user talk over PRIYA and have her yield. */
+                  /*
+                   * The gate. PRIYA does not answer when the user stops
+                   * talking — the client moderates the finished transcript
+                   * first and only then sends response.create. Without this
+                   * she would already be speaking when the verdict lands.
+                   */
+                  create_response: false,
+                  /* Barge-in still works: talking over her cancels her turn. */
                   interrupt_response: true,
                 },
               },

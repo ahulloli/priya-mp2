@@ -4,6 +4,7 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { proposeMemory } from "@/lib/memory-proposal";
 import { createPriyaInstructions } from "@/lib/priya-prompt";
 import { CRISIS_MESSAGE, assessSafety } from "@/lib/safety";
 
@@ -24,6 +25,9 @@ const requestSchema = z.object({
     .max(30),
   memories: z.array(z.string().max(500)).max(20).optional(),
   userId: z.string().max(200).optional(),
+  previousSafetyState: z
+    .enum(["normal", "supportive", "high_risk"])
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -46,6 +50,7 @@ export async function POST(request: Request) {
       messages,
       memories = [],
       userId,
+      previousSafetyState = "normal",
     } = parsed.data;
 
     const latestUserMessage = [...messages]
@@ -78,17 +83,37 @@ export async function POST(request: Request) {
      */
     const recentMessages = messages.slice(-16);
 
-    const response = await openai.responses.create({
-      model: process.env.OPENAI_MODEL ?? "gpt-5.6-luna",
-      instructions: createPriyaInstructions(mode, memories),
-      input: recentMessages.map((message) => ({
-        role: message.role,
-        content: message.content,
-      })),
-      safety_identifier: userId
-        ? createPrivacySafeIdentifier(userId)
-        : undefined,
-    });
+    /*
+     * The turn after a disclosure is still part of it. Dropping back into
+     * ordinary conversation reads as not having heard them.
+     */
+    const inSafetyFollowUp = previousSafetyState === "high_risk";
+
+    /*
+     * The proposal runs alongside the reply rather than after it, so it adds
+     * no latency to what the user is waiting for. It is also skipped entirely
+     * during a safety follow-up — that is not a moment to ask about storage.
+     */
+    const [response, suggestMemory] = await Promise.all([
+      openai.responses.create({
+        model: process.env.OPENAI_MODEL ?? "gpt-5.6-luna",
+        instructions: createPriyaInstructions(
+          mode,
+          memories,
+          inSafetyFollowUp,
+        ),
+        input: recentMessages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        safety_identifier: userId
+          ? createPrivacySafeIdentifier(userId)
+          : undefined,
+      }),
+      inSafetyFollowUp || safetyState !== "normal"
+        ? Promise.resolve(null)
+        : proposeMemory(openai, recentMessages, memories),
+    ]);
 
     const output = response.output_text.trim();
 
@@ -98,8 +123,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       message: output,
-      safetyState,
-      suggestMemory: null,
+      /* Stay in follow-up until the client clears it. */
+      safetyState: inSafetyFollowUp ? "supportive" : safetyState,
+      suggestMemory,
     });
   } catch (error) {
     console.error("PRIYA chat error:", error);

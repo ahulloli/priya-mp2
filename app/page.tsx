@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 
 import CrisisPanel from "@/components/CrisisPanel";
+import FeedbackPanel from "@/components/FeedbackPanel";
 import MemoryPanel from "@/components/MemoryPanel";
 import VoiceCall from "@/components/VoiceCall";
 import VoiceSettings from "@/components/VoiceSettings";
@@ -12,8 +13,11 @@ import {
   approvedMemoryText,
   deleteMemory,
   resetConversation,
+  saveFeedback,
+  saveReport,
   saveVoicePreferences,
   setMode,
+  setSafetyState,
   updateConversation,
   usePriyaStore,
 } from "@/lib/conversation-store";
@@ -22,6 +26,7 @@ import type {
   ChatResponse,
   PriyaMode,
   SafetyState,
+  SuggestedMemory,
 } from "@/types/chat";
 
 const MODES: Array<{ id: PriyaMode; title: string; description: string }> = [
@@ -44,15 +49,18 @@ const MODES: Array<{ id: PriyaMode; title: string; description: string }> = [
 ];
 
 export default function HomePage() {
-  const { conversation, memories, preferences } = usePriyaStore();
+  const { conversation, memories, preferences, feedback, reports } =
+    usePriyaStore();
 
   const [channel, setChannel] = useState<"text" | "voice">("text");
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [safetyState, setSafetyState] = useState<SafetyState>("normal");
-  const [pendingMemory, setPendingMemory] = useState<string | null>(null);
-  const [reported, setReported] = useState<string[]>([]);
+  const [pendingMemory, setPendingMemory] = useState<SuggestedMemory | null>(
+    null,
+  );
+  const [reporting, setReporting] = useState<string | null>(null);
+  const [reportReason, setReportReason] = useState("");
 
   const handleSafetyState = useCallback(
     (state: SafetyState) => setSafetyState(state),
@@ -70,8 +78,9 @@ export default function HomePage() {
     );
   }
 
-  const { mode, messages } = conversation;
+  const { mode, messages, safetyState } = conversation;
   const approved = approvedMemoryText(memories);
+  const reportedIds = new Set(reports.map((report) => report.messageId));
 
   async function sendMessage(event: React.FormEvent) {
     event.preventDefault();
@@ -112,6 +121,7 @@ export default function HomePage() {
           })),
           memories: approved,
           userId: "local-test-user",
+          previousSafetyState: safetyState,
         }),
       });
 
@@ -132,6 +142,11 @@ export default function HomePage() {
         safetyState: data.safetyState,
         createdAt: new Date().toISOString(),
       });
+
+      /* A proposal, not a save. It sits in the panel until approved. */
+      if (data.suggestMemory) {
+        setPendingMemory(data.suggestMemory);
+      }
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -226,17 +241,66 @@ export default function HomePage() {
                     message.id !== "priya-greeting" && (
                       <button
                         type="button"
-                        onClick={() =>
-                          setReported((current) => [...current, message.id])
-                        }
+                        onClick={() => {
+                          setReporting(message.id);
+                          setReportReason("");
+                        }}
                         className="underline"
+                        disabled={reportedIds.has(message.id)}
                       >
-                        {reported.includes(message.id)
+                        {reportedIds.has(message.id)
                           ? "Reported"
                           : "Report this response"}
                       </button>
                     )}
                 </div>
+
+                {reporting === message.id && (
+                  <div className="space-y-2 rounded-xl border border-stone-300 p-3">
+                    <label
+                      htmlFor={`report-${message.id}`}
+                      className="text-sm font-medium"
+                    >
+                      What was wrong with this response?
+                    </label>
+
+                    <textarea
+                      id={`report-${message.id}`}
+                      value={reportReason}
+                      onChange={(event) => setReportReason(event.target.value)}
+                      rows={2}
+                      maxLength={2000}
+                      className="w-full rounded-lg border border-stone-300 p-2 text-sm"
+                    />
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={!reportReason.trim()}
+                        onClick={() => {
+                          saveReport(
+                            message.id,
+                            message.content,
+                            reportReason.trim(),
+                          );
+                          setReporting(null);
+                          setReportReason("");
+                        }}
+                        className="rounded-lg bg-stone-900 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+                      >
+                        Send report
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setReporting(null)}
+                        className="rounded-lg border border-stone-300 px-3 py-1.5 text-sm"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
 
@@ -289,12 +353,17 @@ export default function HomePage() {
         <MemoryPanel
           memories={memories}
           pending={pendingMemory}
-          onApprove={(summary) => {
-            approveMemory(summary);
+          onApprove={(summary, category) => {
+            approveMemory(summary, category);
             setPendingMemory(null);
           }}
           onDismissPending={() => setPendingMemory(null)}
           onDelete={deleteMemory}
+        />
+
+        <FeedbackPanel
+          submittedCount={feedback.length}
+          onSubmit={saveFeedback}
         />
 
         <VoiceSettings

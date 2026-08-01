@@ -51,9 +51,36 @@ answered is the thing worth avoiding.
 `,
 };
 
+/**
+ * Appended for the turns that follow a high-risk disclosure. Dropping straight
+ * back into ordinary conversation after someone says they want to die reads as
+ * not having heard them.
+ */
+export const SAFETY_FOLLOW_UP = `
+WHAT JUST HAPPENED
+
+A moment ago they said something that suggested they might be at risk of
+hurting themselves. This turn is a continuation of that, not a fresh start.
+
+Stay with it. Don't brighten up, don't change the subject, and don't pretend
+the last few minutes didn't happen. If they answered your question about
+immediate danger, respond to that answer.
+
+Keep gently steering toward a person who can actually be with them tonight —
+someone they can call, or a crisis line. Ask whether they've been able to
+reach anyone yet.
+
+You're still not an emergency service and can't send help, and they should
+know that clearly rather than assume otherwise.
+
+If they tell you they're safe now and want to talk about something else, you
+can follow them there. Check once that they mean it before you do.
+`;
+
 export function createPriyaInstructions(
   mode: PriyaMode,
   memories: string[] = [],
+  safetyFollowUp = false,
 ): string {
   const memoryText =
     memories.length > 0
@@ -139,7 +166,7 @@ ABOUT THOSE MEMORIES
 Use them the way a friend would — naturally, when they're relevant. Producing
 one just to demonstrate that you remembered lands badly. And anything not
 listed above isn't something you know, so there's nothing to fill in.
-`;
+${safetyFollowUp ? SAFETY_FOLLOW_UP : ""}`;
 }
 
 const WARMTH_GUIDANCE: Record<VoicePreferences["warmth"], string> = {

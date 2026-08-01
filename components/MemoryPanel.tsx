@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 
-import type { Memory } from "@/types/chat";
+import type { Memory, SuggestedMemory } from "@/types/chat";
 
 type Props = {
   memories: Memory[];
-  /** Text PRIYA proposed, awaiting an explicit yes. Null when nothing is pending. */
-  pending: string | null;
-  onApprove: (summary: string) => void;
+  /** What PRIYA proposed, awaiting an explicit yes. Null when nothing is pending. */
+  pending: SuggestedMemory | null;
+  onApprove: (summary: string, category?: string) => void;
   onDismissPending: () => void;
   onDelete: (id: string) => void;
 };
@@ -27,7 +27,7 @@ export default function MemoryPanel({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
 
-  const proposal = editing ?? pending;
+  const proposal = editing ?? pending?.text ?? "";
 
   return (
     <section className="space-y-4 rounded-2xl border border-stone-200 p-5">
@@ -45,9 +45,14 @@ export default function MemoryPanel({
           </p>
 
           {editing === null ? (
-            <p className="rounded-lg bg-white p-3 text-sm italic">
-              “{pending}”
-            </p>
+            <>
+              <p className="rounded-lg bg-white p-3 text-sm italic">
+                “{pending.text}”
+              </p>
+              {pending.reason && (
+                <p className="text-xs text-stone-500">{pending.reason}</p>
+              )}
+            </>
           ) : (
             <textarea
               value={editing}
@@ -62,7 +67,7 @@ export default function MemoryPanel({
             <button
               type="button"
               onClick={() => {
-                onApprove(proposal ?? "");
+                onApprove(proposal, pending.category);
                 setEditing(null);
               }}
               className="rounded-xl bg-stone-900 px-4 py-2 text-sm font-medium text-white"
@@ -84,7 +89,7 @@ export default function MemoryPanel({
             {editing === null && (
               <button
                 type="button"
-                onClick={() => setEditing(pending)}
+                onClick={() => setEditing(pending.text)}
                 className="rounded-xl border border-stone-300 px-4 py-2 text-sm"
               >
                 Edit

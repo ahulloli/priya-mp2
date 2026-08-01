@@ -27,6 +27,8 @@ export type Conversation = {
   conversation_id: string;
   mode: PriyaMode;
   messages: ChatMessage[];
+  /** Survives turns and refreshes, so a disclosure isn't forgotten. */
+  safetyState: SafetyState;
   createdAt: string;
   updatedAt: string;
 };
@@ -84,17 +86,59 @@ export const DEFAULT_VOICE_PREFERENCES: VoicePreferences = {
   useName: false,
 };
 
+export const MEMORY_CATEGORIES = [
+  "upcoming_event",
+  "long_term_goal",
+  "ongoing_challenge",
+  "communication_preference",
+  "important_relationship",
+  "decision_to_revisit",
+] as const;
+
+export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
+
+/** A proposal only. Nothing is stored until the user presses Remember this. */
+export type SuggestedMemory = {
+  text: string;
+  category: MemoryCategory;
+  reason: string;
+};
+
 export type ChatRequest = {
   mode: PriyaMode;
   messages: Pick<ChatMessage, "role" | "content">[];
   memories?: string[];
   userId?: string;
+  /**
+   * Where the conversation already was. A high_risk turn keeps the next one
+   * in follow-up rather than dropping straight back to ordinary chat.
+   */
+  previousSafetyState?: SafetyState;
 };
 
 export type ChatResponse = {
   message: string;
   safetyState: SafetyState;
-  suggestMemory?: string | null;
+  suggestMemory?: SuggestedMemory | null;
+};
+
+export type Feedback = {
+  id: string;
+  conversation_id: string;
+  feltUnderstood: number;
+  helpful: number;
+  hasNextStep: boolean;
+  comments?: string;
+  createdAt: string;
+};
+
+export type ReportedResponse = {
+  id: string;
+  conversation_id: string;
+  messageId: string;
+  content: string;
+  reason: string;
+  createdAt: string;
 };
 
 export type ModerationResponse = {
