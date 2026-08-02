@@ -53,6 +53,11 @@ export type ChatMessage = {
 export type Conversation = {
   conversation_id: string;
   mode: PriyaMode;
+  /**
+   * Set when the conversation is archived. Starts as a fallback drawn from the
+   * first thing the user said, then upgraded by /api/title.
+   */
+  title?: string;
   messages: ChatMessage[];
   /**
    * Survives turns, refreshes, and channel switches. The single source of

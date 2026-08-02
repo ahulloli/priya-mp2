@@ -22,10 +22,18 @@ import { DEFAULT_VOICE_PREFERENCES } from "@/types/chat";
  */
 
 const CONVERSATION_KEY = "priya.conversation";
+const ARCHIVE_KEY = "priya.conversations";
 const MEMORIES_KEY = "priya.memories";
 const PREFERENCES_KEY = "priya.voicePreferences";
 const FEEDBACK_KEY = "priya.feedback";
 const REPORTS_KEY = "priya.reports";
+
+/*
+ * sessionStorage is the whole trick behind "closing the app ends the
+ * conversation". It survives a refresh but is wiped when the tab closes, so
+ * its absence means the app was genuinely reopened rather than reloaded.
+ */
+const SESSION_KEY = "priya.session";
 
 const GREETING: ChatMessage = {
   id: "priya-greeting",
@@ -36,6 +44,8 @@ const GREETING: ChatMessage = {
 
 export type StoreState = {
   conversation: Conversation | null;
+  /** Finished conversations, newest first. */
+  archive: Conversation[];
   memories: Memory[];
   preferences: VoicePreferences;
   feedback: Feedback[];
@@ -45,6 +55,7 @@ export type StoreState = {
 /* Server and first client render share this, so hydration matches. */
 const EMPTY_STATE: StoreState = {
   conversation: null,
+  archive: [],
   memories: [],
   preferences: DEFAULT_VOICE_PREFERENCES,
   feedback: [],
@@ -92,6 +103,65 @@ export function createConversation(mode: PriyaMode): Conversation {
   };
 }
 
+/** A conversation nobody actually said anything in isn't worth keeping. */
+function hasContent(conversation: Conversation): boolean {
+  return conversation.messages.some((message) => message.role === "user");
+}
+
+/** Used immediately, then replaced by the model's title when it arrives. */
+function fallbackTitle(conversation: Conversation): string {
+  const firstUser = conversation.messages.find(
+    (message) => message.role === "user",
+  );
+
+  if (!firstUser) {
+    return "Empty conversation";
+  }
+
+  const text = firstUser.content.trim();
+
+  return text.length > 48 ? `${text.slice(0, 48).trim()}…` : text;
+}
+
+/**
+ * Asks the model for a better name and swaps it in when it lands. Failure is
+ * silent — the fallback title is already showing and is perfectly usable.
+ */
+async function upgradeTitle(conversation: Conversation): Promise<void> {
+  try {
+    const response = await fetch("/api/title", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: conversation.messages
+          .filter((message) => message.id !== "priya-greeting")
+          .map(({ role, content }) => ({ role, content })),
+      }),
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const { title } = (await response.json()) as { title: string | null };
+
+    if (!title) {
+      return;
+    }
+
+    const archive = state.archive.map((entry) =>
+      entry.conversation_id === conversation.conversation_id
+        ? { ...entry, title }
+        : entry,
+    );
+
+    write(ARCHIVE_KEY, archive);
+    emit({ ...state, archive });
+  } catch {
+    /* Keep the fallback. */
+  }
+}
+
 function hydrate(): void {
   if (hydrated || typeof window === "undefined") {
     return;
@@ -100,13 +170,40 @@ function hydrate(): void {
   hydrated = true;
 
   const stored = read<Conversation | null>(CONVERSATION_KEY, null);
+  let archive = read<Conversation[]>(ARCHIVE_KEY, []);
+
+  const previous =
+    stored && Array.isArray(stored.messages)
+      ? /* Records written before this field existed default to normal. */
+        { ...stored, safetyPhase: stored.safetyPhase ?? "normal" }
+      : null;
+
+  /* No marker means the app was reopened, not refreshed. */
+  const isNewAppSession =
+    window.sessionStorage.getItem(SESSION_KEY) === null;
+
+  window.sessionStorage.setItem(SESSION_KEY, "1");
+
+  let current: Conversation;
+  let toTitle: Conversation | null = null;
+
+  if (previous && isNewAppSession && hasContent(previous)) {
+    /* Close the book on it and start fresh. */
+    const finished = { ...previous, title: fallbackTitle(previous) };
+
+    archive = [finished, ...archive].slice(0, 100);
+    write(ARCHIVE_KEY, archive);
+
+    current = createConversation(previous.mode);
+    write(CONVERSATION_KEY, current);
+    toTitle = finished;
+  } else {
+    current = previous ?? createConversation("listen");
+  }
 
   emit({
-    conversation:
-      stored && Array.isArray(stored.messages)
-        ? /* Records written before this field existed default to normal. */
-          { ...stored, safetyPhase: stored.safetyPhase ?? "normal" }
-        : createConversation("listen"),
+    conversation: current,
+    archive,
     memories: read<Memory[]>(MEMORIES_KEY, []),
     preferences: {
       ...DEFAULT_VOICE_PREFERENCES,
@@ -115,6 +212,11 @@ function hydrate(): void {
     feedback: read<Feedback[]>(FEEDBACK_KEY, []),
     reports: read<ReportedResponse[]>(REPORTS_KEY, []),
   });
+
+  if (toTitle) {
+    /* Fire and forget; the list already shows the fallback. */
+    void upgradeTitle(toTitle);
+  }
 }
 
 function subscribe(listener: () => void): () => void {
@@ -160,8 +262,64 @@ export function setMode(mode: PriyaMode): void {
   updateConversation((conversation) => ({ ...conversation, mode }));
 }
 
+/** Files the current conversation away, if there's anything in it. */
+function archiveCurrent(): Conversation[] {
+  const current = state.conversation;
+
+  if (!current || !hasContent(current)) {
+    return state.archive;
+  }
+
+  const finished = { ...current, title: current.title ?? fallbackTitle(current) };
+  const archive = [finished, ...state.archive].slice(0, 100);
+
+  write(ARCHIVE_KEY, archive);
+
+  if (!current.title) {
+    void upgradeTitle(finished);
+  }
+
+  return archive;
+}
+
+/** "Start a new conversation" — the old one is kept and titled, not discarded. */
 export function resetConversation(mode: PriyaMode): void {
-  persistConversation(createConversation(mode));
+  const archive = archiveCurrent();
+  const conversation = createConversation(mode);
+
+  write(CONVERSATION_KEY, conversation);
+  emit({ ...state, conversation, archive });
+}
+
+/**
+ * Reopens a past conversation. It comes out of the archive and becomes current
+ * so it can be continued; it gets filed again when this session ends.
+ */
+export function openConversation(id: string): void {
+  const target = state.archive.find(
+    (entry) => entry.conversation_id === id,
+  );
+
+  if (!target) {
+    return;
+  }
+
+  const archive = archiveCurrent().filter(
+    (entry) => entry.conversation_id !== id,
+  );
+
+  write(ARCHIVE_KEY, archive);
+  write(CONVERSATION_KEY, target);
+  emit({ ...state, conversation: target, archive });
+}
+
+export function deleteArchivedConversation(id: string): void {
+  const archive = state.archive.filter(
+    (entry) => entry.conversation_id !== id,
+  );
+
+  write(ARCHIVE_KEY, archive);
+  emit({ ...state, archive });
 }
 
 /**

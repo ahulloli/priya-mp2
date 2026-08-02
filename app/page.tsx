@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 
+import ConversationList from "@/components/ConversationList";
 import CrisisPanel from "@/components/CrisisPanel";
 import FeedbackPanel from "@/components/FeedbackPanel";
 import FormattedText from "@/components/FormattedText";
@@ -12,8 +13,10 @@ import {
   appendMessage,
   approveMemory,
   approvedMemoryText,
+  deleteArchivedConversation,
   deleteMemory,
   editMemory,
+  openConversation,
   resetConversation,
   saveFeedback,
   saveReport,
@@ -52,7 +55,7 @@ const MODES: Array<{ id: PriyaMode; title: string; description: string }> = [
 ];
 
 export default function HomePage() {
-  const { conversation, memories, preferences, feedback, reports } =
+  const { conversation, archive, memories, preferences, feedback, reports } =
     usePriyaStore();
 
   const [channel, setChannel] = useState<"text" | "voice">("text");
@@ -380,6 +383,13 @@ export default function HomePage() {
             )}
           </div>
         </div>
+
+        <ConversationList
+          conversations={archive}
+          currentId={conversation.conversation_id}
+          onOpen={openConversation}
+          onDelete={deleteArchivedConversation}
+        />
 
         <MemoryPanel
           memories={memories}

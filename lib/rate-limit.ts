@@ -35,6 +35,7 @@ export const LIMITS = {
   chat: { limit: 30, windowMs: 60_000 },
   moderate: { limit: 120, windowMs: 60_000 },
   realtimeSession: { limit: 10, windowMs: 60_000 },
+  title: { limit: 20, windowMs: 60_000 },
 } satisfies Record<string, RateLimit>;
 
 function clientKey(request: Request): string {
