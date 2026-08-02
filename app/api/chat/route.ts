@@ -6,7 +6,13 @@ import { z } from "zod";
 
 import { proposeMemory } from "@/lib/memory-proposal";
 import { createPriyaInstructions } from "@/lib/priya-prompt";
-import { CRISIS_MESSAGE, assessSafety } from "@/lib/safety";
+import { guardRequest } from "@/lib/rate-limit";
+import {
+  CRISIS_MESSAGE,
+  assessSafety,
+  needsFollowUpGuidance,
+  nextSafetyPhase,
+} from "@/lib/safety";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -31,13 +37,25 @@ const requestSchema = z.object({
     .max(2000),
   memories: z.array(z.string().max(500)).max(20).optional(),
   userId: z.string().max(200).optional(),
-  previousSafetyState: z
-    .enum(["normal", "supportive", "high_risk"])
+  safetyPhase: z
+    .enum([
+      "normal",
+      "supportive",
+      "immediate_safety_check",
+      "safety_follow_up",
+      "resolved",
+    ])
     .optional(),
 });
 
 export async function POST(request: Request) {
   try {
+    const blocked = guardRequest(request, "chat");
+
+    if (blocked) {
+      return blocked;
+    }
+
     const body: unknown = await request.json();
     const parsed = requestSchema.safeParse(body);
 
@@ -56,7 +74,7 @@ export async function POST(request: Request) {
       messages,
       memories = [],
       userId,
-      previousSafetyState = "normal",
+      safetyPhase = "normal",
     } = parsed.data;
 
     const latestUserMessage = [...messages]
@@ -74,11 +92,12 @@ export async function POST(request: Request) {
      * Safety check before generating the response.
      */
     const safetyState = await assessSafety(openai, latestUserMessage.content);
+    const phase = nextSafetyPhase(safetyPhase, safetyState);
 
     if (safetyState === "high_risk") {
       return NextResponse.json({
         message: CRISIS_MESSAGE,
-        safetyState: "high_risk",
+        safetyPhase: phase,
         suggestMemory: null,
       });
     }
@@ -91,10 +110,10 @@ export async function POST(request: Request) {
     const recentMessages = messages;
 
     /*
-     * The turn after a disclosure is still part of it. Dropping back into
-     * ordinary conversation reads as not having heard them.
+     * A disclosure is sticky. It stays in follow-up for as many turns as it
+     * takes, until the user says they're okay — not for exactly one turn.
      */
-    const inSafetyFollowUp = previousSafetyState === "high_risk";
+    const inSafetyFollowUp = needsFollowUpGuidance(phase);
 
     /*
      * The proposal runs alongside the reply rather than after it, so it adds
@@ -130,8 +149,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       message: output,
-      /* Stay in follow-up until the client clears it. */
-      safetyState: inSafetyFollowUp ? "supportive" : safetyState,
+      safetyPhase: phase,
       suggestMemory,
     });
   } catch (error) {

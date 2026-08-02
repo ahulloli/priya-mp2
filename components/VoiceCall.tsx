@@ -2,12 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { nextSafetyPhase } from "@/lib/safety-phase";
 import type {
   ChatMessage,
   PriyaMode,
+  SafetyPhase,
   SafetyState,
+  SuggestedMemory,
   VoicePreferences,
 } from "@/types/chat";
+import { isActiveSafetyPhase } from "@/types/chat";
 
 export type VoiceStatus =
   | "idle"
@@ -21,9 +25,13 @@ type Props = {
   mode: PriyaMode;
   memories: string[];
   preferences: VoicePreferences;
-  /** Called for every finished turn so it lands in the shared conversation. */
+  /** Everything said so far, in either channel, to seed the session. */
+  history: ChatMessage[];
+  /** The conversation's phase. This component keeps no safety state of its own. */
+  safetyPhase: SafetyPhase;
   onMessage: (message: ChatMessage) => void;
-  onSafetyState: (state: SafetyState) => void;
+  onSafetyPhase: (phase: SafetyPhase) => void;
+  onSuggestMemory: (memory: SuggestedMemory) => void;
   onSwitchToText: () => void;
 };
 
@@ -36,12 +44,23 @@ const STATUS_COPY: Record<VoiceStatus, string> = {
   error: "Something went wrong",
 };
 
+/*
+ * Cancelling a response that the server already cancelled is normal and
+ * expected — the user talking over PRIYA triggers both. These must not be
+ * surfaced as connection failures.
+ */
+const BENIGN_ERROR_PATTERN =
+  /cancel|no active response|already|truncat|not found/i;
+
 export default function VoiceCall({
   mode,
   memories,
   preferences,
+  history,
+  safetyPhase,
   onMessage,
-  onSafetyState,
+  onSafetyPhase,
+  onSuggestMemory,
   onSwitchToText,
 }: Props) {
   const [status, setStatus] = useState<VoiceStatus>("idle");
@@ -55,10 +74,28 @@ export default function VoiceCall({
   const micStreamRef = useRef<MediaStream | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  /* Tracks whether the current PRIYA turn was cut off by the user. */
+
+  /* Whether the current PRIYA turn was cut off by the user. */
   const interruptedRef = useRef(false);
-  /* Once a disclosure happens, later turns stay in follow-up. */
-  const highRiskRef = useRef(false);
+  /* The assistant item currently playing, and when its audio started. */
+  const speakingItemRef = useRef<{ id: string; startedAt: number } | null>(
+    null,
+  );
+
+  /*
+   * Latest props for use inside long-lived callbacks. Reading the phase from
+   * a ref keeps it current without tearing down the session on every change,
+   * but the value still originates from the conversation, not from here.
+   */
+  const phaseRef = useRef(safetyPhase);
+  const historyRef = useRef(history);
+  const memoriesRef = useRef(memories);
+
+  useEffect(() => {
+    phaseRef.current = safetyPhase;
+    historyRef.current = history;
+    memoriesRef.current = memories;
+  }, [safetyPhase, history, memories]);
 
   const send = useCallback((event: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -68,29 +105,66 @@ export default function VoiceCall({
     }
   }, []);
 
-  /** Cuts PRIYA off immediately — both the generation and the audio already buffered. */
-  const stopSpeaking = useCallback(() => {
-    send({ type: "response.cancel" });
+  /**
+   * Tells the model how much of its own turn was actually heard. Without this
+   * it believes the user heard the whole reply, and the next turn answers a
+   * sentence that never reached them.
+   *
+   * The server has already cancelled generation itself (interrupt_response is
+   * on), so this truncates rather than cancelling a second time.
+   */
+  const truncateSpokenTurn = useCallback(() => {
+    const speaking = speakingItemRef.current;
 
-    const audio = audioRef.current;
-
-    if (audio) {
-      /*
-       * Cancelling generation doesn't drop audio already in the jitter buffer,
-       * so the element gets reset too. Otherwise PRIYA keeps talking for a
-       * second after being interrupted.
-       */
-      const stream = audio.srcObject;
-      audio.srcObject = null;
-      audio.srcObject = stream;
+    if (!speaking) {
+      return;
     }
+
+    send({
+      type: "conversation.item.truncate",
+      item_id: speaking.id,
+      content_index: 0,
+      audio_end_ms: Math.max(0, Date.now() - speaking.startedAt),
+    });
+
+    speakingItemRef.current = null;
   }, [send]);
 
+  /** Asks for a memory proposal once a spoken exchange has completed. */
+  const requestMemoryProposal = useCallback(async () => {
+    try {
+      const response = await fetch("/api/memory-proposal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: historyRef.current.map(({ role, content }) => ({
+            role,
+            content,
+          })),
+          memories: memoriesRef.current,
+        }),
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const { suggestMemory } = (await response.json()) as {
+        suggestMemory: SuggestedMemory | null;
+      };
+
+      if (suggestMemory) {
+        onSuggestMemory(suggestMemory);
+      }
+    } catch {
+      /* A missing proposal is a non-event. */
+    }
+  }, [onSuggestMemory]);
+
   /**
-   * The gate. The session is configured with create_response: false, so
-   * nothing is spoken until this runs and explicitly asks for a response.
-   * Every path through here either creates a response or leaves the turn
-   * unanswered — never both, and never before the verdict.
+   * The gate. The session sets create_response: false, so nothing is spoken
+   * until this runs and explicitly asks for a reply. Every path either creates
+   * a response after a verdict, or leaves the turn unanswered.
    */
   const moderateThenRespond = useCallback(
     async (text: string) => {
@@ -111,10 +185,7 @@ export default function VoiceCall({
           safetyState: SafetyState;
         });
       } catch {
-        /*
-         * Failing open would mean speaking without ever having checked. The
-         * turn goes unanswered and the user is told why.
-         */
+        /* Failing open would mean speaking without having checked. */
         setSafetyWarning(
           "PRIYA couldn’t run her safety check, so she didn’t reply to that. Please try again, or switch to text.",
         );
@@ -122,18 +193,17 @@ export default function VoiceCall({
         return;
       }
 
-      onSafetyState(safetyState);
+      const phase = nextSafetyPhase(phaseRef.current, safetyState);
 
-      if (safetyState === "high_risk") {
-        highRiskRef.current = true;
+      phaseRef.current = phase;
+      onSafetyPhase(phase);
 
-        /* Swap in crisis handling before asking for any audio. */
+      if (phase === "immediate_safety_check") {
         send({
           type: "session.update",
           session: { type: "realtime", instructions: CRISIS_TURN },
         });
-      } else if (highRiskRef.current) {
-        /* Still inside the follow-up: keep the crisis framing in place. */
+      } else if (isActiveSafetyPhase(phase)) {
         send({
           type: "session.update",
           session: { type: "realtime", instructions: FOLLOW_UP_TURN },
@@ -142,7 +212,7 @@ export default function VoiceCall({
 
       send({ type: "response.create" });
     },
-    [onSafetyState, send],
+    [onSafetyPhase, send],
   );
 
   const disconnect = useCallback(() => {
@@ -154,6 +224,7 @@ export default function VoiceCall({
     micStreamRef.current = null;
 
     channelRef.current = null;
+    speakingItemRef.current = null;
     setStatus("idle");
     setLiveUser("");
     setLivePriya("");
@@ -163,14 +234,24 @@ export default function VoiceCall({
   useEffect(() => disconnect, [disconnect]);
 
   const handleEvent = useCallback(
-    (event: { type: string; transcript?: string; delta?: string }) => {
+    (event: {
+      type: string;
+      transcript?: string;
+      delta?: string;
+      item_id?: string;
+      error?: { message?: string; code?: string; type?: string };
+    }) => {
       switch (event.type) {
         case "input_audio_buffer.speech_started":
-          /* They started talking. If PRIYA was mid-sentence, that's an interrupt. */
+          /*
+           * They started talking. interrupt_response already had the server
+           * cancel PRIYA's turn, so cancelling again here would race it — we
+           * only need to record how much was heard.
+           */
           setStatus((current) => {
             if (current === "speaking") {
               interruptedRef.current = true;
-              stopSpeaking();
+              truncateSpokenTurn();
             }
             return "listening";
           });
@@ -208,6 +289,14 @@ export default function VoiceCall({
         case "response.output_audio.delta":
         case "response.audio.delta":
           setStatus("speaking");
+
+          if (event.item_id && speakingItemRef.current?.id !== event.item_id) {
+            /* First audio for this item: playback clock starts here. */
+            speakingItemRef.current = {
+              id: event.item_id,
+              startedAt: Date.now(),
+            };
+          }
           break;
 
         case "response.output_audio_transcript.delta":
@@ -237,21 +326,64 @@ export default function VoiceCall({
         }
 
         case "response.done":
+          speakingItemRef.current = null;
           setStatus((current) =>
             current === "speaking" || current === "thinking"
               ? "listening"
               : current,
           );
+
+          /* Not during a disclosure — that is not a moment to ask about storage. */
+          if (!isActiveSafetyPhase(phaseRef.current)) {
+            void requestMemoryProposal();
+          }
           break;
 
-        case "error":
+        case "error": {
+          const detail = `${event.error?.code ?? ""} ${event.error?.type ?? ""} ${event.error?.message ?? ""}`;
+
+          if (BENIGN_ERROR_PATTERN.test(detail)) {
+            /* Expected during barge-in. Not a connection failure. */
+            console.debug("Realtime benign error:", detail.trim());
+            break;
+          }
+
+          console.error("Realtime error:", detail.trim());
           setError("The voice connection reported an error.");
           setStatus("error");
           break;
+        }
       }
     },
-    [moderateThenRespond, onMessage, stopSpeaking],
+    [moderateThenRespond, onMessage, requestMemoryProposal, truncateSpokenTurn],
   );
+
+  /**
+   * Replays the existing conversation into the fresh session, so switching
+   * from text to voice continues rather than starting over. The greeting is
+   * skipped; it is scaffolding, not something anyone said.
+   */
+  const seedHistory = useCallback(() => {
+    historyRef.current
+      .filter((message) => message.id !== "priya-greeting")
+      .slice(-40)
+      .forEach((message) => {
+        send({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: message.role,
+            content: [
+              {
+                type:
+                  message.role === "user" ? "input_text" : "output_text",
+                text: message.content,
+              },
+            ],
+          },
+        });
+      });
+  }, [send]);
 
   async function connect() {
     setError("");
@@ -282,11 +414,20 @@ export default function VoiceCall({
       const sessionResponse = await fetch("/api/realtime/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, memories, preferences }),
+        body: JSON.stringify({
+          mode,
+          memories,
+          preferences,
+          safetyPhase,
+        }),
       });
 
       if (!sessionResponse.ok) {
-        throw new Error("Could not start a voice session.");
+        throw new Error(
+          sessionResponse.status === 429
+            ? "Too many voice sessions started. Please wait a moment."
+            : "Could not start a voice session.",
+        );
       }
 
       const { clientSecret, model } = (await sessionResponse.json()) as {
@@ -318,7 +459,11 @@ export default function VoiceCall({
       const channel = peer.createDataChannel("oai-events");
       channelRef.current = channel;
 
-      channel.onopen = () => setStatus("listening");
+      channel.onopen = () => {
+        seedHistory();
+        setStatus("listening");
+      };
+
       channel.onmessage = (message) => {
         try {
           handleEvent(JSON.parse(message.data));
@@ -379,7 +524,6 @@ export default function VoiceCall({
 
   return (
     <div className="space-y-4">
-      
       <audio ref={audioRef} autoPlay className="hidden" />
 
       <div className="flex flex-col items-center gap-4 rounded-3xl border border-stone-200 bg-stone-50 p-8">

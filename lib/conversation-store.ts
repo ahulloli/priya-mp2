@@ -7,7 +7,7 @@ import type {
   Memory,
   PriyaMode,
   ReportedResponse,
-  SafetyState,
+  SafetyPhase,
   VoicePreferences,
 } from "@/types/chat";
 import { DEFAULT_VOICE_PREFERENCES } from "@/types/chat";
@@ -86,7 +86,7 @@ export function createConversation(mode: PriyaMode): Conversation {
     conversation_id: `conv_${crypto.randomUUID()}`,
     mode,
     messages: [{ ...GREETING, createdAt: now }],
-    safetyState: "normal",
+    safetyPhase: "normal",
     createdAt: now,
     updatedAt: now,
   };
@@ -105,7 +105,7 @@ function hydrate(): void {
     conversation:
       stored && Array.isArray(stored.messages)
         ? /* Records written before this field existed default to normal. */
-          { ...stored, safetyState: stored.safetyState ?? "normal" }
+          { ...stored, safetyPhase: stored.safetyPhase ?? "normal" }
         : createConversation("listen"),
     memories: read<Memory[]>(MEMORIES_KEY, []),
     preferences: {
@@ -190,6 +190,22 @@ export function approveMemory(summary: string, category = "general"): void {
   emit({ ...state, memories });
 }
 
+/** Approved memories stay editable; a saved detail can go stale or be wrong. */
+export function editMemory(id: string, summary: string): void {
+  const trimmed = summary.trim();
+
+  if (!trimmed) {
+    return;
+  }
+
+  const memories = state.memories.map((memory) =>
+    memory.id === id ? { ...memory, summary: trimmed } : memory,
+  );
+
+  write(MEMORIES_KEY, memories);
+  emit({ ...state, memories });
+}
+
 export function deleteMemory(id: string): void {
   const memories = state.memories.filter((memory) => memory.id !== id);
 
@@ -202,9 +218,12 @@ export function saveVoicePreferences(preferences: VoicePreferences): void {
   emit({ ...state, preferences });
 }
 
-/** Persisted so a disclosure isn't forgotten by the next turn or a refresh. */
-export function setSafetyState(safetyState: SafetyState): void {
-  updateConversation((conversation) => ({ ...conversation, safetyState }));
+/**
+ * The single source of truth for safety, shared by text and voice. Persisted
+ * so a disclosure survives the next turn, a refresh, and a channel switch.
+ */
+export function setSafetyPhase(safetyPhase: SafetyPhase): void {
+  updateConversation((conversation) => ({ ...conversation, safetyPhase }));
 }
 
 export function saveFeedback(

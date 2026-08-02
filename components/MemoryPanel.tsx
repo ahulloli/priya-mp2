@@ -10,6 +10,7 @@ type Props = {
   pending: SuggestedMemory | null;
   onApprove: (summary: string, category?: string) => void;
   onDismissPending: () => void;
+  onEdit: (id: string, summary: string) => void;
   onDelete: (id: string) => void;
 };
 
@@ -22,10 +23,16 @@ export default function MemoryPanel({
   pending,
   onApprove,
   onDismissPending,
+  onEdit,
   onDelete,
 }: Props) {
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
+  /* Which already-saved memory is open for editing, and its working text. */
+  const [savedEdit, setSavedEdit] = useState<{
+    id: string;
+    text: string;
+  } | null>(null);
 
   const proposal = editing ?? pending?.text ?? "";
 
@@ -102,19 +109,69 @@ export default function MemoryPanel({
       {memories.length > 0 ? (
         <ul className="space-y-2">
           {memories.map((memory) => (
-            <li
-              key={memory.id}
-              className="flex items-start justify-between gap-3 rounded-xl bg-stone-50 p-3"
-            >
-              <span className="text-sm">{memory.summary}</span>
+            <li key={memory.id} className="rounded-xl bg-stone-50 p-3">
+              {savedEdit?.id === memory.id ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={savedEdit.text}
+                    onChange={(event) =>
+                      setSavedEdit({
+                        id: memory.id,
+                        text: event.target.value,
+                      })
+                    }
+                    rows={2}
+                    maxLength={500}
+                    className="w-full rounded-lg border border-stone-300 p-2 text-sm"
+                  />
 
-              <button
-                type="button"
-                onClick={() => onDelete(memory.id)}
-                className="shrink-0 text-xs font-medium text-red-700 underline"
-              >
-                Delete
-              </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={!savedEdit.text.trim()}
+                      onClick={() => {
+                        onEdit(memory.id, savedEdit.text);
+                        setSavedEdit(null);
+                      }}
+                      className="rounded-lg bg-stone-900 px-3 py-1 text-xs text-white disabled:opacity-40"
+                    >
+                      Save
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSavedEdit(null)}
+                      className="rounded-lg border border-stone-300 px-3 py-1 text-xs"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-sm">{memory.summary}</span>
+
+                  <div className="flex shrink-0 gap-2 text-xs font-medium">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSavedEdit({ id: memory.id, text: memory.summary })
+                      }
+                      className="underline"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onDelete(memory.id)}
+                      className="text-red-700 underline"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>

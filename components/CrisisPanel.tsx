@@ -5,7 +5,15 @@ import { CRISIS_RESOURCES, NOT_AN_EMERGENCY_SERVICE } from "@/lib/safety";
  * and in voice alike. Someone who only heard a number read aloud once will not
  * have retained it.
  */
-export default function CrisisPanel({ onDismiss }: { onDismiss: () => void }) {
+export default function CrisisPanel({
+  onHide,
+  onResolve,
+}: {
+  /** Collapses the panel. Deliberately does not change the safety phase. */
+  onHide: () => void;
+  /** The user saying they're okay — the only thing that ends the phase. */
+  onResolve: () => void;
+}) {
   return (
     <section
       role="alert"
@@ -29,13 +37,23 @@ export default function CrisisPanel({ onDismiss }: { onDismiss: () => void }) {
 
       <p className="text-xs text-red-800">{NOT_AN_EMERGENCY_SERVICE}</p>
 
-      <button
-        type="button"
-        onClick={onDismiss}
-        className="rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-900"
-      >
-        Dismiss
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onResolve}
+          className="rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-900"
+        >
+          I’m safe now
+        </button>
+
+        <button
+          type="button"
+          onClick={onHide}
+          className="rounded-xl px-4 py-2 text-sm text-red-800 underline"
+        >
+          Hide this
+        </button>
+      </div>
     </section>
   );
 }

@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { guardRequest } from "@/lib/rate-limit";
 import { CRISIS_MESSAGE, assessSafety } from "@/lib/safety";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -11,16 +12,24 @@ const requestSchema = z.object({
 });
 
 /**
- * The safety gate for voice. The browser holds the audio connection directly,
- * so every transcript that comes back gets posted here as it lands. A
- * high_risk verdict tells the client to cut PRIYA off mid-sentence and show
- * the crisis panel.
+ * The safety gate for voice, and it gates *before* PRIYA speaks.
  *
- * This is reactive, not preventive: PRIYA may already have spoken a sentence
- * before the verdict arrives. The text route still gates before generating.
+ * The Realtime session is configured with turn_detection.create_response set
+ * to false, so ending a turn does not trigger a reply on its own. The client
+ * posts the finished transcript here and only sends response.create once this
+ * has answered. Nothing is spoken before classification.
+ *
+ * If you are tempted to "fix" this by re-enabling create_response: don't.
+ * That is the bug this design exists to prevent.
  */
 export async function POST(request: Request) {
   try {
+    const blocked = guardRequest(request, "moderate");
+
+    if (blocked) {
+      return blocked;
+    }
+
     const parsed = requestSchema.safeParse(await request.json());
 
     if (!parsed.success) {

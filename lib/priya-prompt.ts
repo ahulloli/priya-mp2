@@ -1,4 +1,9 @@
-import type { PriyaMode, VoicePreferences } from "@/types/chat";
+import type {
+  PriyaMode,
+  SafetyPhase,
+  VoicePreferences,
+} from "@/types/chat";
+import { isActiveSafetyPhase } from "@/types/chat";
 
 const MODE_INSTRUCTIONS: Record<PriyaMode, string> = {
   listen: `
@@ -243,8 +248,9 @@ export function createRealtimeInstructions(
   mode: PriyaMode,
   memories: string[],
   preferences: VoicePreferences,
+  safetyPhase: SafetyPhase = "normal",
 ): string {
-  return `${createPriyaInstructions(mode, memories)}
+  return `${createPriyaInstructions(mode, memories, isActiveSafetyPhase(safetyPhase))}
 ${createVoiceDeliveryGuidance(preferences)}
 
 YOU'RE SPEAKING THIS ALOUD

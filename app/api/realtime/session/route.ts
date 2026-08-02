@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createRealtimeInstructions } from "@/lib/priya-prompt";
+import { guardRequest } from "@/lib/rate-limit";
 import { REALTIME_VOICES } from "@/types/chat";
 
 const REALTIME_MODEL =
@@ -10,6 +11,15 @@ const REALTIME_MODEL =
 const requestSchema = z.object({
   mode: z.enum(["listen", "understand", "similar", "plan"]),
   memories: z.array(z.string().max(500)).max(20).optional(),
+  safetyPhase: z
+    .enum([
+      "normal",
+      "supportive",
+      "immediate_safety_check",
+      "safety_follow_up",
+      "resolved",
+    ])
+    .optional(),
   preferences: z.object({
     voice: z.enum(REALTIME_VOICES),
     pace: z.number().min(0.7).max(1.2),
@@ -29,6 +39,12 @@ const requestSchema = z.object({
  */
 export async function POST(request: Request) {
   try {
+    const blocked = guardRequest(request, "realtimeSession");
+
+    if (blocked) {
+      return blocked;
+    }
+
     const parsed = requestSchema.safeParse(await request.json());
 
     if (!parsed.success) {
@@ -38,7 +54,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const { mode, memories = [], preferences } = parsed.data;
+    const {
+      mode,
+      memories = [],
+      preferences,
+      safetyPhase = "normal",
+    } = parsed.data;
 
     const response = await fetch(
       "https://api.openai.com/v1/realtime/client_secrets",
@@ -52,10 +73,16 @@ export async function POST(request: Request) {
           session: {
             type: "realtime",
             model: REALTIME_MODEL,
+            /*
+             * The phase travels with the session, so a voice call opened
+             * during an unresolved disclosure starts already holding it
+             * instead of greeting the user as if nothing happened.
+             */
             instructions: createRealtimeInstructions(
               mode,
               memories,
               preferences,
+              safetyPhase,
             ),
             audio: {
               input: {

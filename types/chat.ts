@@ -4,7 +4,33 @@ export type PriyaMode =
   | "similar"
   | "plan";
 
+/** What the classifier says about a single message. */
 export type SafetyState = "normal" | "supportive" | "high_risk";
+
+/**
+ * Where the conversation is, which is not the same question. One phase, stored
+ * on the conversation and shared by text and voice, so the two channels cannot
+ * drift apart about whether a disclosure happened.
+ *
+ *   normal ──classifier high_risk──> immediate_safety_check
+ *   immediate_safety_check ──next turn──> safety_follow_up
+ *   safety_follow_up ──stays until the user says they're okay──> resolved
+ *
+ * Only the user resolves it. Hiding the crisis panel does not.
+ */
+export type SafetyPhase =
+  | "normal"
+  | "supportive"
+  | "immediate_safety_check"
+  | "safety_follow_up"
+  | "resolved";
+
+/** Phases where PRIYA is still holding a disclosure. */
+export function isActiveSafetyPhase(phase: SafetyPhase): boolean {
+  return (
+    phase === "immediate_safety_check" || phase === "safety_follow_up"
+  );
+}
 
 /** Voice is just another format. The conversation stays text internally. */
 export type Channel = "text" | "voice";
@@ -19,7 +45,8 @@ export type ChatMessage = {
   output_type?: Channel;
   /** True when the user spoke over PRIYA before she finished. */
   interrupted?: boolean;
-  safetyState?: SafetyState;
+  /** The phase this message was produced in, kept for later review. */
+  safetyPhase?: SafetyPhase;
   createdAt?: string;
 };
 
@@ -27,8 +54,11 @@ export type Conversation = {
   conversation_id: string;
   mode: PriyaMode;
   messages: ChatMessage[];
-  /** Survives turns and refreshes, so a disclosure isn't forgotten. */
-  safetyState: SafetyState;
+  /**
+   * Survives turns, refreshes, and channel switches. The single source of
+   * truth for safety — VoiceCall reads this rather than keeping its own.
+   */
+  safetyPhase: SafetyPhase;
   createdAt: string;
   updatedAt: string;
 };
@@ -109,16 +139,13 @@ export type ChatRequest = {
   messages: Pick<ChatMessage, "role" | "content">[];
   memories?: string[];
   userId?: string;
-  /**
-   * Where the conversation already was. A high_risk turn keeps the next one
-   * in follow-up rather than dropping straight back to ordinary chat.
-   */
-  previousSafetyState?: SafetyState;
+  /** Where the conversation already was, so a disclosure carries forward. */
+  safetyPhase?: SafetyPhase;
 };
 
 export type ChatResponse = {
   message: string;
-  safetyState: SafetyState;
+  safetyPhase: SafetyPhase;
   suggestMemory?: SuggestedMemory | null;
 };
 

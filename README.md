@@ -59,9 +59,28 @@ speaking. The client moderates the finished transcript and only then sends
 safety check leaves the turn unanswered rather than failing open. Barge-in
 still works via `interrupt_response: true`.
 
-A high-risk turn sets a conversation-level state that survives later turns and
-refreshes, so the turns after a disclosure continue it rather than resetting to
-ordinary chat.
+Safety is one phase stored on the conversation and shared by both channels:
+
+```
+normal ──high_risk──> immediate_safety_check ──> safety_follow_up ──> resolved
+```
+
+A disclosure is sticky. It holds across as many turns as it takes, survives
+refreshes, and carries into a voice session opened mid-conversation. Only the
+user ends it, by pressing "I'm safe now" — hiding the crisis panel is a display
+choice and deliberately does not clear the phase.
+
+### Rate limiting
+
+`/api/chat`, `/api/moderate`, `/api/realtime/session` and `/api/memory-proposal`
+are all rate limited per IP and reject cross-origin calls. The realtime route
+gets the tightest budget because it mints credentials against the OpenAI
+account.
+
+This limiter is in-process, so on serverless it is per-instance and the
+effective limit is multiplied by however many are warm. It raises the cost of
+casual abuse; it is not a substitute for authentication and a shared store,
+both of which are required before a public deployment.
 
 ### Memory
 
@@ -69,13 +88,19 @@ PRIYA proposes at most one durable detail per turn — an upcoming event, a
 long-term goal, an ongoing challenge — running alongside the reply so it costs
 no latency. Passing emotions, credentials, and sensitive categories are never
 proposed. A proposal is only a proposal: nothing is stored without an explicit
-press, and the user sees the exact text first and can edit or delete it.
+press, and the user sees the exact text first. Saved memories stay editable.
+Spoken turns propose memories too, via `/api/memory-proposal`.
 
 ## Not built yet
 
-Supabase persistence — conversations, memories, feedback, and reports all
-currently live in `localStorage`, which is fine for solo testing but not for an
-invite-only beta. Also unbuilt: the optional voice features (voice notes,
-guided reflection, interview practice, check-ins).
+**Authentication and Supabase.** Conversations, memories, feedback and reports
+all live in `localStorage`. Fine for solo testing, not for an invite-only beta,
+and the rate limiter needs real per-user quotas behind a session.
 
-The WebRTC audio loop has not been exercised in a browser.
+Also unbuilt: the optional voice features — voice notes, guided reflection,
+interview practice, check-ins.
+
+**The WebRTC audio loop has never run in a browser.** Session setup, token
+minting, moderation and the phase machine are all verified server-side, but
+history seeding, barge-in truncation and the spoken loop itself are unexercised
+until someone clicks the button with a microphone attached.

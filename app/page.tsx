@@ -13,12 +13,13 @@ import {
   approveMemory,
   approvedMemoryText,
   deleteMemory,
+  editMemory,
   resetConversation,
   saveFeedback,
   saveReport,
   saveVoicePreferences,
   setMode,
-  setSafetyState,
+  setSafetyPhase,
   updateConversation,
   usePriyaStore,
 } from "@/lib/conversation-store";
@@ -26,9 +27,10 @@ import type {
   ChatMessage,
   ChatResponse,
   PriyaMode,
-  SafetyState,
+  SafetyPhase,
   SuggestedMemory,
 } from "@/types/chat";
+import { isActiveSafetyPhase } from "@/types/chat";
 
 const MODES: Array<{ id: PriyaMode; title: string; description: string }> = [
   { id: "listen", title: "Listen", description: "Give me space to talk." },
@@ -62,9 +64,20 @@ export default function HomePage() {
   );
   const [reporting, setReporting] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState("");
+  /*
+   * Hiding the panel is a display choice. It does not mean the person is okay,
+   * so it never touches the safety phase.
+   */
+  const [crisisPanelHidden, setCrisisPanelHidden] = useState(false);
 
-  const handleSafetyState = useCallback(
-    (state: SafetyState) => setSafetyState(state),
+  const handleSafetyPhase = useCallback(
+    (phase: SafetyPhase) => {
+      setSafetyPhase(phase);
+
+      if (isActiveSafetyPhase(phase)) {
+        setCrisisPanelHidden(false);
+      }
+    },
     [],
   );
 
@@ -79,9 +92,13 @@ export default function HomePage() {
     );
   }
 
-  const { mode, messages, safetyState } = conversation;
+  const { mode, messages, safetyPhase } = conversation;
   const approved = approvedMemoryText(memories);
   const reportedIds = new Set(reports.map((report) => report.messageId));
+  /* Scoped to this conversation; the store keeps every conversation's. */
+  const conversationFeedback = feedback.filter(
+    (entry) => entry.conversation_id === conversation.conversation_id,
+  );
 
   async function sendMessage(event: React.FormEvent) {
     event.preventDefault();
@@ -122,7 +139,7 @@ export default function HomePage() {
           })),
           memories: approved,
           userId: "local-test-user",
-          previousSafetyState: safetyState,
+          safetyPhase,
         }),
       });
 
@@ -134,13 +151,13 @@ export default function HomePage() {
         );
       }
 
-      setSafetyState(data.safetyState);
+      handleSafetyPhase(data.safetyPhase);
       appendMessage({
         id: crypto.randomUUID(),
         role: "assistant",
         content: data.message,
         output_type: "text",
-        safetyState: data.safetyState,
+        safetyPhase: data.safetyPhase,
         createdAt: new Date().toISOString(),
       });
 
@@ -215,8 +232,14 @@ export default function HomePage() {
           </header>
 
           <section className="flex-1 space-y-4 overflow-y-auto p-6">
-            {safetyState === "high_risk" && (
-              <CrisisPanel onDismiss={() => setSafetyState("normal")} />
+            {isActiveSafetyPhase(safetyPhase) && !crisisPanelHidden && (
+              <CrisisPanel
+                onHide={() => setCrisisPanelHidden(true)}
+                onResolve={() => {
+                  setSafetyPhase("resolved");
+                  setCrisisPanelHidden(true);
+                }}
+              />
             )}
 
             {messages.map((message) => (
@@ -347,8 +370,11 @@ export default function HomePage() {
                 mode={mode}
                 memories={approved}
                 preferences={preferences}
+                history={messages}
+                safetyPhase={safetyPhase}
                 onMessage={appendMessage}
-                onSafetyState={handleSafetyState}
+                onSafetyPhase={handleSafetyPhase}
+                onSuggestMemory={setPendingMemory}
                 onSwitchToText={switchToText}
               />
             )}
@@ -363,11 +389,12 @@ export default function HomePage() {
             setPendingMemory(null);
           }}
           onDismissPending={() => setPendingMemory(null)}
+          onEdit={editMemory}
           onDelete={deleteMemory}
         />
 
         <FeedbackPanel
-          submittedCount={feedback.length}
+          submittedCount={conversationFeedback.length}
           onSubmit={saveFeedback}
         />
 
@@ -381,7 +408,7 @@ export default function HomePage() {
           type="button"
           onClick={() => {
             resetConversation(mode);
-            setSafetyState("normal");
+            setCrisisPanelHidden(false);
           }}
           className="self-start text-sm text-stone-500 underline"
         >

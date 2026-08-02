@@ -4,11 +4,12 @@ import type { SafetyState } from "@/types/chat";
 
 /*
  * Fixed rather than generated, so the first moment of a crisis is always the
- * same and always correct. Warm on purpose: someone who feels handled here
- * stops talking, and that is the outcome we least want.
+ * same and always correct. Warm on purpose — someone who feels handled here
+ * stops talking — but every warm line has to be literally true of an AI.
+ * No claimed feelings, no "I wish", no "you matter to me".
  */
 export const CRISIS_MESSAGE =
-  "Thank you for telling me that. I know it isn’t a small thing to say out loud, and I’m glad you did.\n\nRight now you matter more to me than whatever we were talking about. Please reach someone who can actually be with you — someone you trust, or one of the lines on your screen. I’m an AI, so I can’t come sit with you or send anyone, and I wish I could.\n\nI’m still here. Are you in danger of acting on this right now?";
+  "Thank you for telling me. I know that isn’t a small thing to say out loud.\n\nRight now your safety matters more than anything else we were talking about. Please reach someone who can actually be with you — someone you trust, or one of the lines on your screen. I’m an AI, so I can’t come to you or contact anyone on your behalf, but I can stay in this conversation and help you work out who to reach.\n\nI’m still here. Are you in danger of acting on this right now?";
 
 /**
  * Shown on screen alongside the spoken version. A distressed person will not
@@ -65,3 +66,7 @@ export async function assessSafety(
 
   return result?.flagged ? "supportive" : "normal";
 }
+
+/* Phase transitions live in safety-phase.ts so the browser can import them
+ * without pulling in the OpenAI SDK. Re-exported here for server callers. */
+export { needsFollowUpGuidance, nextSafetyPhase } from "@/lib/safety-phase";
