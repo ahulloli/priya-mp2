@@ -5,6 +5,7 @@ import {
   clearAll,
   createMessage,
   flushWrites,
+  isGreeting,
   recordSafetyEvent,
 } from "@/lib/conversation-store";
 import { priyaStorage } from "@/lib/storage";
@@ -297,7 +298,7 @@ describe("conversation write ordering", () => {
 
     const stored = await priyaStorage.getActiveConversation();
     const contents = stored!.messages
-      .filter((message) => message.id !== "priya-greeting")
+      .filter((message) => !isGreeting(message))
       .map((message) => message.content);
 
     expect(contents).toEqual(["one", "two", "three"]);

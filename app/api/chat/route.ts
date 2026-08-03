@@ -7,6 +7,7 @@ import { z } from "zod";
 import { proposeMemory } from "@/lib/memory-proposal";
 import { createPriyaInstructions } from "@/lib/priya-prompt";
 import { guardRequest } from "@/lib/rate-limit";
+import { getUser } from "@/lib/supabase/server";
 import {
   CRISIS_MESSAGE,
   assessSafety,
@@ -41,7 +42,6 @@ const requestSchema = z.object({
    * persist, so it would brick the app permanently.
    */
   memories: z.array(z.string().max(500)).max(200).optional(),
-  userId: z.string().max(200).optional(),
   safetyPhase: z
     .enum([
       "normal",
@@ -72,6 +72,7 @@ export async function POST(request: Request) {
       return blocked;
     }
 
+    const user = await getUser();
     const body: unknown = await request.json();
     const parsed = requestSchema.safeParse(body);
 
@@ -89,7 +90,6 @@ export async function POST(request: Request) {
       mode,
       messages,
       memories = [],
-      userId,
       safetyPhase = "normal",
       recalled = [],
     } = parsed.data;
@@ -151,8 +151,12 @@ export async function POST(request: Request) {
           role: message.role,
           content: message.content,
         })),
-        safety_identifier: userId
-          ? createPrivacySafeIdentifier(userId)
+        /*
+         * Derived from the session, never from the request body. A browser
+         * can put any id it likes in JSON; it cannot forge a signed cookie.
+         */
+        safety_identifier: user
+          ? createPrivacySafeIdentifier(user.id)
           : undefined,
       }),
       inSafetyFollowUp || safetyState !== "normal"

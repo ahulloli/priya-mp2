@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { createMessage } from "@/lib/conversation-store";
+import { createMessage, isGreeting } from "@/lib/conversation-store";
 import {
   canCreateSpokenResponse,
   nextSafetyPhase,
@@ -469,7 +469,7 @@ export default function VoiceCall({
    */
   const seedHistory = useCallback(() => {
     historyRef.current
-      .filter((message) => message.id !== "priya-greeting")
+      .filter((message) => !isGreeting(message))
       .slice(-40)
       .forEach((message) => {
         send({

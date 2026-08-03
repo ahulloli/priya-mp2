@@ -36,7 +36,13 @@ import { DEFAULT_VOICE_PREFERENCE } from "@/types/chat";
  */
 const SESSION_KEY = "priya.session";
 
-const GREETING_ID = "priya-greeting";
+/*
+ * The greeting needs a stable *shape* but a unique id. It used to be the
+ * literal string "priya-greeting" for every conversation, which is harmless
+ * inside a per-conversation blob and a primary-key collision the moment
+ * messages become rows.
+ */
+const GREETING_PREFIX = "greeting_";
 
 export type StoreState = {
   conversation: Conversation | null;
@@ -84,7 +90,7 @@ export function createConversation(mode: PriyaMode): Conversation {
     updatedAt: timestamp,
     messages: [
       {
-        id: GREETING_ID,
+        id: `${GREETING_PREFIX}${id}`,
         conversationId: id,
         role: "assistant",
         content: "Hi, I’m PRIYA. What has been on your mind lately?",
@@ -98,7 +104,10 @@ export function createConversation(mode: PriyaMode): Conversation {
 }
 
 export function isGreeting(message: Message): boolean {
-  return message.id === GREETING_ID;
+  /* The bare string is the pre-migration form; still recognised on read. */
+  return (
+    message.id.startsWith(GREETING_PREFIX) || message.id === "priya-greeting"
+  );
 }
 
 /** A conversation nobody actually said anything in isn't worth keeping. */

@@ -14,6 +14,7 @@ import {
   appendMessage,
   approveMemory,
   createMessage,
+  isGreeting,
   approvedMemoryText,
   deleteArchivedConversation,
   deleteMemory,
@@ -157,7 +158,6 @@ export default function HomePage() {
             content,
           })),
           memories: approved,
-          userId: "local-test-user",
           safetyPhase,
           recalled,
         }),
@@ -293,7 +293,7 @@ export default function HomePage() {
                   {message.interrupted && <span>interrupted</span>}
 
                   {message.role === "assistant" &&
-                    message.id !== "priya-greeting" && (
+                    !isGreeting(message) && (
                       <button
                         type="button"
                         onClick={() => {
