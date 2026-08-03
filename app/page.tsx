@@ -17,6 +17,7 @@ import {
   deleteMemory,
   editMemory,
   openConversation,
+  recalledConversations,
   resetConversation,
   saveFeedback,
   saveReport,
@@ -98,6 +99,7 @@ export default function HomePage() {
   const { mode, messages, safetyPhase } = conversation;
   const approved = approvedMemoryText(memories);
   const reportedIds = new Set(reports.map((report) => report.messageId));
+  const recalled = recalledConversations(archive);
   /* Scoped to this conversation; the store keeps every conversation's. */
   const conversationFeedback = feedback.filter(
     (entry) => entry.conversation_id === conversation.conversation_id,
@@ -143,6 +145,7 @@ export default function HomePage() {
           memories: approved,
           userId: "local-test-user",
           safetyPhase,
+          recalled,
         }),
       });
 
@@ -375,6 +378,7 @@ export default function HomePage() {
                 preferences={preferences}
                 history={messages}
                 safetyPhase={safetyPhase}
+                recalled={recalled}
                 onMessage={appendMessage}
                 onSafetyPhase={handleSafetyPhase}
                 onSuggestMemory={setPendingMemory}

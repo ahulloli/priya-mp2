@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 
 import type {
   ChatMessage,
+  RecalledConversation,
   Conversation,
   Feedback,
   Memory,
@@ -124,8 +125,9 @@ function fallbackTitle(conversation: Conversation): string {
 }
 
 /**
- * Asks the model for a better name and swaps it in when it lands. Failure is
- * silent — the fallback title is already showing and is perfectly usable.
+ * Asks the model to name the conversation and write the note PRIYA reads
+ * before later ones. Failure is silent — the fallback title is already showing,
+ * and a conversation with no summary simply contributes nothing to recall.
  */
 async function upgradeTitle(conversation: Conversation): Promise<void> {
   try {
@@ -143,15 +145,22 @@ async function upgradeTitle(conversation: Conversation): Promise<void> {
       return;
     }
 
-    const { title } = (await response.json()) as { title: string | null };
+    const { title, summary } = (await response.json()) as {
+      title: string | null;
+      summary: string | null;
+    };
 
-    if (!title) {
+    if (!title && !summary) {
       return;
     }
 
     const archive = state.archive.map((entry) =>
       entry.conversation_id === conversation.conversation_id
-        ? { ...entry, title }
+        ? {
+            ...entry,
+            title: title ?? entry.title,
+            summary: summary ?? entry.summary,
+          }
         : entry,
     );
 
@@ -424,6 +433,45 @@ export function saveReport(messageId: string, content: string, reason: string): 
 
   write(REPORTS_KEY, reports);
   emit({ ...state, reports });
+}
+
+function whenLabel(iso: string): string {
+  const date = new Date(iso);
+  const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
+
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 14) return "last week";
+  if (days < 60) return `${Math.floor(days / 7)} weeks ago`;
+
+  return date.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/**
+ * What PRIYA gets to know about earlier conversations. Only summarised ones
+ * count — a conversation whose summary never came back contributes nothing
+ * rather than dumping a raw transcript into the prompt.
+ *
+ * Newest first, capped: this rides along on every turn, so it has to stay
+ * small. Once someone has hundreds of these, picking the relevant ones by
+ * similarity beats taking the most recent.
+ */
+export function recalledConversations(
+  archive: Conversation[],
+  limit = 12,
+): RecalledConversation[] {
+  return archive
+    .filter((entry) => entry.summary && entry.title)
+    .slice(0, limit)
+    .map((entry) => ({
+      title: entry.title!,
+      summary: entry.summary!,
+      when: whenLabel(entry.updatedAt),
+    }));
 }
 
 /** Only approved memories are ever sent to the model. */

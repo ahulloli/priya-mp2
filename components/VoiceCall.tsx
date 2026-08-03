@@ -6,6 +6,7 @@ import { nextSafetyPhase } from "@/lib/safety-phase";
 import type {
   ChatMessage,
   PriyaMode,
+  RecalledConversation,
   SafetyPhase,
   SafetyState,
   SuggestedMemory,
@@ -29,6 +30,8 @@ type Props = {
   history: ChatMessage[];
   /** The conversation's phase. This component keeps no safety state of its own. */
   safetyPhase: SafetyPhase;
+  /** Condensed earlier conversations, so voice has the same continuity. */
+  recalled: RecalledConversation[];
   onMessage: (message: ChatMessage) => void;
   onSafetyPhase: (phase: SafetyPhase) => void;
   onSuggestMemory: (memory: SuggestedMemory) => void;
@@ -58,6 +61,7 @@ export default function VoiceCall({
   preferences,
   history,
   safetyPhase,
+  recalled,
   onMessage,
   onSafetyPhase,
   onSuggestMemory,
@@ -419,6 +423,7 @@ export default function VoiceCall({
           memories,
           preferences,
           safetyPhase,
+          recalled,
         }),
       });
 

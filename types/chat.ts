@@ -58,6 +58,8 @@ export type Conversation = {
    * first thing the user said, then upgraded by /api/title.
    */
   title?: string;
+  /** Durable note PRIYA reads before later conversations. */
+  summary?: string;
   messages: ChatMessage[];
   /**
    * Survives turns, refreshes, and channel switches. The single source of
@@ -139,6 +141,13 @@ export type SuggestedMemory = {
   reason: string;
 };
 
+/** A past conversation, condensed, as handed to PRIYA for continuity. */
+export type RecalledConversation = {
+  title: string;
+  summary: string;
+  when: string;
+};
+
 export type ChatRequest = {
   mode: PriyaMode;
   messages: Pick<ChatMessage, "role" | "content">[];
@@ -146,6 +155,8 @@ export type ChatRequest = {
   userId?: string;
   /** Where the conversation already was, so a disclosure carries forward. */
   safetyPhase?: SafetyPhase;
+  /** Earlier conversations, so PRIYA can pick up threads across sessions. */
+  recalled?: RecalledConversation[];
 };
 
 export type ChatResponse = {

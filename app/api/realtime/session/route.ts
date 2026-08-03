@@ -25,6 +25,16 @@ const requestSchema = z.object({
       "resolved",
     ])
     .optional(),
+  recalled: z
+    .array(
+      z.object({
+        title: z.string().max(120),
+        summary: z.string().max(800),
+        when: z.string().max(40),
+      }),
+    )
+    .max(20)
+    .optional(),
   preferences: z.object({
     voice: z.enum(REALTIME_VOICES),
     pace: z.number().min(0.7).max(1.2),
@@ -64,6 +74,7 @@ export async function POST(request: Request) {
       memories = [],
       preferences,
       safetyPhase = "normal",
+      recalled = [],
     } = parsed.data;
 
     const response = await fetch(
@@ -88,6 +99,7 @@ export async function POST(request: Request) {
               memories,
               preferences,
               safetyPhase,
+              recalled,
             ),
             audio: {
               input: {

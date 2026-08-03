@@ -51,6 +51,17 @@ const requestSchema = z.object({
       "resolved",
     ])
     .optional(),
+  /* Condensed earlier conversations, newest first. */
+  recalled: z
+    .array(
+      z.object({
+        title: z.string().max(120),
+        summary: z.string().max(800),
+        when: z.string().max(40),
+      }),
+    )
+    .max(20)
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -80,6 +91,7 @@ export async function POST(request: Request) {
       memories = [],
       userId,
       safetyPhase = "normal",
+      recalled = [],
     } = parsed.data;
 
     const latestUserMessage = [...messages]
@@ -132,6 +144,7 @@ export async function POST(request: Request) {
           mode,
           memories,
           inSafetyFollowUp,
+          recalled,
         ),
         input: recentMessages.map((message) => ({
           role: message.role,

@@ -1,5 +1,6 @@
 import type {
   PriyaMode,
+  RecalledConversation,
   SafetyPhase,
   VoicePreferences,
 } from "@/types/chat";
@@ -102,11 +103,47 @@ export function createPriyaInstructions(
   mode: PriyaMode,
   memories: string[] = [],
   safetyFollowUp = false,
+  recalled: RecalledConversation[] = [],
 ): string {
   const memoryText =
     memories.length > 0
       ? memories.map((memory) => `- ${memory}`).join("\n")
       : "No approved memories are available.";
+
+  const recallSection =
+    recalled.length > 0
+      ? `
+EARLIER CONVERSATIONS
+
+Notes from times you've talked before, newest first. These are your own record
+of what was going on, not things they've asked you to memorise.
+
+${recalled
+  .map(
+    (entry) => `[${entry.when}] ${entry.title}\n${entry.summary}`,
+  )
+  .join("\n\n")}
+
+Use these the way a friend uses what they already know about someone — as
+background that shapes how you respond, not material to recite. Most of the
+time they should be invisible: you're just someone who already has the context
+rather than someone being told it again.
+
+Don't open by cataloguing what you remember, don't say "last time you said",
+and don't check in on every thread at once. If something is clearly still
+live, it's fine to ask about it once, naturally.
+
+Time has passed. Something written as upcoming may already have happened, so
+ask rather than assume, and don't talk about a past date as though it's still
+ahead.
+
+If an earlier conversation was a hard one, let it make you gentler. Don't raise
+it yourself unless they do.
+
+These notes are your summaries, not verified fact. If one conflicts with what
+they're telling you now, they're right and the note is stale.
+`
+      : "";
 
   return `
 You are PRIYA: Personalized Relational Intelligence, Your Ally.
@@ -181,6 +218,7 @@ ${MODE_INSTRUCTIONS[mode]}
 
 USER-APPROVED MEMORIES:
 ${memoryText}
+${recallSection}
 
 ABOUT THOSE MEMORIES
 
@@ -249,8 +287,9 @@ export function createRealtimeInstructions(
   memories: string[],
   preferences: VoicePreferences,
   safetyPhase: SafetyPhase = "normal",
+  recalled: RecalledConversation[] = [],
 ): string {
-  return `${createPriyaInstructions(mode, memories, isActiveSafetyPhase(safetyPhase))}
+  return `${createPriyaInstructions(mode, memories, isActiveSafetyPhase(safetyPhase), recalled)}
 ${createVoiceDeliveryGuidance(preferences)}
 
 YOU'RE SPEAKING THIS ALOUD
