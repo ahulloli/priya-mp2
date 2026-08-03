@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 
 import ConversationList from "@/components/ConversationList";
 import CrisisPanel from "@/components/CrisisPanel";
+import DevTools from "@/components/DevTools";
 import FeedbackPanel from "@/components/FeedbackPanel";
 import FormattedText from "@/components/FormattedText";
 import MemoryPanel from "@/components/MemoryPanel";
@@ -12,6 +13,7 @@ import VoiceSettings from "@/components/VoiceSettings";
 import {
   appendMessage,
   approveMemory,
+  createMessage,
   approvedMemoryText,
   deleteArchivedConversation,
   deleteMemory,
@@ -21,15 +23,15 @@ import {
   resetConversation,
   saveFeedback,
   saveReport,
-  saveVoicePreferences,
+  saveVoicePreference,
   setMode,
   setSafetyPhase,
   updateConversation,
   usePriyaStore,
 } from "@/lib/conversation-store";
 import type {
-  ChatMessage,
   ChatResponse,
+  MemoryCategory,
   PriyaMode,
   SafetyPhase,
   SuggestedMemory,
@@ -56,7 +58,7 @@ const MODES: Array<{ id: PriyaMode; title: string; description: string }> = [
 ];
 
 export default function HomePage() {
-  const { conversation, archive, memories, preferences, feedback, reports } =
+  const { conversation, archive, memories, preference, feedback, reports } =
     usePriyaStore();
 
   const [channel, setChannel] = useState<"text" | "voice">("text");
@@ -102,7 +104,7 @@ export default function HomePage() {
   const recalled = recalledConversations(archive);
   /* Scoped to this conversation; the store keeps every conversation's. */
   const conversationFeedback = feedback.filter(
-    (entry) => entry.conversation_id === conversation.conversation_id,
+    (entry) => entry.conversationId === conversation.id,
   );
 
   async function sendMessage(event: React.FormEvent) {
@@ -114,13 +116,9 @@ export default function HomePage() {
       return;
     }
 
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: cleanInput,
-      input_type: "text",
-      createdAt: new Date().toISOString(),
-    };
+    const userMessage = createMessage("user", cleanInput, {
+      inputType: "text",
+    });
 
     const nextMessages = [...messages, userMessage];
 
@@ -158,14 +156,9 @@ export default function HomePage() {
       }
 
       handleSafetyPhase(data.safetyPhase);
-      appendMessage({
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: data.message,
-        output_type: "text",
-        safetyPhase: data.safetyPhase,
-        createdAt: new Date().toISOString(),
-      });
+      appendMessage(
+        createMessage("assistant", data.message, { outputType: "text" }),
+      );
 
       /* A proposal, not a save. It sits in the panel until approved. */
       if (data.suggestMemory) {
@@ -265,7 +258,7 @@ export default function HomePage() {
                     message.role === "user" ? "justify-end" : ""
                   }`}
                 >
-                  {(message.input_type ?? message.output_type) === "voice" && (
+                  {(message.inputType ?? message.outputType) === "voice" && (
                     <span>spoken</span>
                   )}
 
@@ -312,7 +305,7 @@ export default function HomePage() {
                         type="button"
                         disabled={!reportReason.trim()}
                         onClick={() => {
-                          saveReport(
+                          void saveReport(
                             message.id,
                             message.content,
                             reportReason.trim(),
@@ -375,7 +368,7 @@ export default function HomePage() {
               <VoiceCall
                 mode={mode}
                 memories={approved}
-                preferences={preferences}
+                preferences={preference}
                 history={messages}
                 safetyPhase={safetyPhase}
                 recalled={recalled}
@@ -390,38 +383,40 @@ export default function HomePage() {
 
         <ConversationList
           conversations={archive}
-          currentId={conversation.conversation_id}
-          onOpen={openConversation}
-          onDelete={deleteArchivedConversation}
+          currentId={conversation.id}
+          onOpen={(id) => void openConversation(id)}
+          onDelete={(id) => void deleteArchivedConversation(id)}
         />
 
         <MemoryPanel
           memories={memories}
           pending={pendingMemory}
           onApprove={(summary, category) => {
-            approveMemory(summary, category);
+            void approveMemory(summary, category as MemoryCategory);
             setPendingMemory(null);
           }}
           onDismissPending={() => setPendingMemory(null)}
-          onEdit={editMemory}
-          onDelete={deleteMemory}
+          onEdit={(id, summary) => void editMemory(id, summary)}
+          onDelete={(id) => void deleteMemory(id)}
         />
 
         <FeedbackPanel
           submittedCount={conversationFeedback.length}
-          onSubmit={saveFeedback}
+          onSubmit={(entry) => void saveFeedback(entry)}
         />
 
         <VoiceSettings
-          preferences={preferences}
-          onChange={saveVoicePreferences}
+          preferences={preference}
+          onChange={(next) => void saveVoicePreference(next)}
           disabled={channel === "voice"}
         />
+
+        <DevTools />
 
         <button
           type="button"
           onClick={() => {
-            resetConversation(mode);
+            void resetConversation(mode);
             setCrisisPanelHidden(false);
           }}
           className="self-start text-sm text-stone-500 underline"

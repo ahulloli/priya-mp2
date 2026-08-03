@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-import type { ChatMessage, SuggestedMemory } from "@/types/chat";
+import type { Message, SuggestedMemory } from "@/types/chat";
 import { MEMORY_CATEGORIES } from "@/types/chat";
 
 const MEMORY_MODEL = process.env.OPENAI_MEMORY_MODEL ?? "gpt-5.4-mini";
@@ -54,7 +54,7 @@ const SCHEMA = {
  */
 export async function proposeMemory(
   openai: OpenAI,
-  messages: Pick<ChatMessage, "role" | "content">[],
+  messages: Pick<Message, "role" | "content">[],
   existingMemories: string[],
 ): Promise<SuggestedMemory | null> {
   try {

@@ -1,11 +1,11 @@
 "use client";
 
-import type { VoicePreferences } from "@/types/chat";
+import type { VoicePreference } from "@/types/chat";
 import { REALTIME_VOICES } from "@/types/chat";
 
 type Props = {
-  preferences: VoicePreferences;
-  onChange: (preferences: VoicePreferences) => void;
+  preferences: VoicePreference;
+  onChange: (preferences: VoicePreference) => void;
   /** Preference edits only take effect on the next session. */
   disabled: boolean;
 };
@@ -34,9 +34,9 @@ export default function VoiceSettings({
   onChange,
   disabled,
 }: Props) {
-  function update<K extends keyof VoicePreferences>(
+  function update<K extends keyof VoicePreference>(
     key: K,
-    value: VoicePreferences[K],
+    value: VoicePreference[K],
   ) {
     onChange({ ...preferences, [key]: value });
   }
@@ -58,7 +58,7 @@ export default function VoiceSettings({
           <select
             value={preferences.voice}
             onChange={(event) =>
-              update("voice", event.target.value as VoicePreferences["voice"])
+              update("voice", event.target.value as VoicePreference["voice"])
             }
             className="mt-1 w-full rounded-xl border border-stone-300 p-2 capitalize"
           >
@@ -100,7 +100,7 @@ export default function VoiceSettings({
                 update(
                   key,
                   event.target
-                    .value as VoicePreferences[typeof key],
+                    .value as VoicePreference[typeof key],
                 )
               }
               className="mt-1 w-full rounded-xl border border-stone-300 p-2"

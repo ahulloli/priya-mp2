@@ -20,6 +20,16 @@ cp .env.example .env.local   # then add your OpenAI key
 npm run dev
 ```
 
+```bash
+npm run test    # deterministic, offline
+npm run lint
+npm run build
+```
+
+`npm run test:model` is a separate suite that calls the real API against a
+running dev server. It is slow, costs money, and is inherently
+non-deterministic, so it is not a gate — run it after changing prompts.
+
 ## How it fits together
 
 ```
@@ -36,8 +46,21 @@ components/
 lib/
   priya-prompt.ts                 personality, voice, and boundaries
   safety.ts                       one classifier shared by text and voice
-  conversation-store.ts           shared conversation state (localStorage)
+  safety-phase.ts                 phase transitions, shared with the browser
+  conversation-store.ts           shared conversation state
+  storage/                        the seam Supabase slots into
 ```
+
+### Storage
+
+Components and the store never touch `localStorage`. Everything goes through
+the `PriyaStorage` interface in `lib/storage/`, implemented today by
+`LocalStorageAdapter`. Connecting Supabase means writing one more adapter and
+changing one line in `lib/storage/index.ts` — no UI changes.
+
+Records written before the shapes were finalised (`conversation_id`,
+snake_case message fields) are migrated on read, so existing test data
+survives.
 
 ### The four modes
 

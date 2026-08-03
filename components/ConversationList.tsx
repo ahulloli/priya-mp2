@@ -51,13 +51,13 @@ export default function ConversationList({
 
           return (
             <li
-              key={conversation.conversation_id}
+              key={conversation.id}
               className="flex items-center justify-between gap-3 rounded-xl px-3 py-2 hover:bg-stone-50"
             >
               <button
                 type="button"
-                onClick={() => onOpen(conversation.conversation_id)}
-                disabled={conversation.conversation_id === currentId}
+                onClick={() => onOpen(conversation.id)}
+                disabled={conversation.id === currentId}
                 className="min-w-0 flex-1 text-left"
               >
                 <span className="block truncate text-sm font-medium">
@@ -72,7 +72,7 @@ export default function ConversationList({
 
               <button
                 type="button"
-                onClick={() => onDelete(conversation.conversation_id)}
+                onClick={() => onDelete(conversation.id)}
                 className="shrink-0 text-xs font-medium text-red-700 underline"
               >
                 Delete

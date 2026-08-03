@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "types": ["vitest/globals", "node"] },
+  "include": ["tests/**/*.ts", "types/**/*.ts", "lib/**/*.ts"]
+}

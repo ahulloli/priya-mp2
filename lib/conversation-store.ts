@@ -1,56 +1,51 @@
 import { useSyncExternalStore } from "react";
 
+import { priyaStorage } from "@/lib/storage";
 import type {
-  ChatMessage,
-  RecalledConversation,
+  Channel,
   Conversation,
   Feedback,
   Memory,
+  MemoryCategory,
+  Message,
   PriyaMode,
-  ReportedResponse,
+  RecalledConversation,
+  Report,
+  SafetyEvent,
   SafetyPhase,
-  VoicePreferences,
+  SafetyState,
+  VoicePreference,
 } from "@/types/chat";
-import { DEFAULT_VOICE_PREFERENCES } from "@/types/chat";
+import { DEFAULT_VOICE_PREFERENCE } from "@/types/chat";
 
 /*
  * One store behind both channels. Typing and speaking append to the same
- * conversation record, which is what lets someone start in text, move to
- * voice, and come back without losing the thread.
+ * conversation, which is what lets someone start in text, move to voice, and
+ * come back without losing the thread.
  *
- * Backed by localStorage for the prototype. The shapes match the Supabase
- * tables from the Phase 1 plan, so that swap should stay inside this file.
+ * Nothing here touches localStorage. Persistence goes through priyaStorage, so
+ * pointing it at Supabase is a change in lib/storage rather than in here.
  */
-
-const CONVERSATION_KEY = "priya.conversation";
-const ARCHIVE_KEY = "priya.conversations";
-const MEMORIES_KEY = "priya.memories";
-const PREFERENCES_KEY = "priya.voicePreferences";
-const FEEDBACK_KEY = "priya.feedback";
-const REPORTS_KEY = "priya.reports";
 
 /*
  * sessionStorage is the whole trick behind "closing the app ends the
  * conversation". It survives a refresh but is wiped when the tab closes, so
  * its absence means the app was genuinely reopened rather than reloaded.
+ * Deliberately not in the storage interface: it is a browser-session signal,
+ * not user data, and it has no meaning on a server.
  */
 const SESSION_KEY = "priya.session";
 
-const GREETING: ChatMessage = {
-  id: "priya-greeting",
-  role: "assistant",
-  content: "Hi, I’m PRIYA. What has been on your mind lately?",
-  output_type: "text",
-};
+const GREETING_ID = "priya-greeting";
 
 export type StoreState = {
   conversation: Conversation | null;
   /** Finished conversations, newest first. */
   archive: Conversation[];
   memories: Memory[];
-  preferences: VoicePreferences;
+  preference: VoicePreference;
   feedback: Feedback[];
-  reports: ReportedResponse[];
+  reports: Report[];
 };
 
 /* Server and first client render share this, so hydration matches. */
@@ -58,7 +53,7 @@ const EMPTY_STATE: StoreState = {
   conversation: null,
   archive: [],
   memories: [],
-  preferences: DEFAULT_VOICE_PREFERENCES,
+  preference: DEFAULT_VOICE_PREFERENCE,
   feedback: [],
   reports: [],
 };
@@ -73,35 +68,37 @@ function emit(next: StoreState): void {
   listeners.forEach((listener) => listener());
 }
 
-function read<T>(key: string, fallback: T): T {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    /* Corrupt or unavailable storage shouldn't take the app down. */
-    return fallback;
-  }
-}
-
-function write(key: string, value: unknown): void {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* Quota or private-mode failures are non-fatal; state stays in memory. */
-  }
+function now(): string {
+  return new Date().toISOString();
 }
 
 export function createConversation(mode: PriyaMode): Conversation {
-  const now = new Date().toISOString();
+  const timestamp = now();
+  const id = `conv_${crypto.randomUUID()}`;
 
   return {
-    conversation_id: `conv_${crypto.randomUUID()}`,
+    id,
     mode,
-    messages: [{ ...GREETING, createdAt: now }],
     safetyPhase: "normal",
-    createdAt: now,
-    updatedAt: now,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    messages: [
+      {
+        id: GREETING_ID,
+        conversationId: id,
+        role: "assistant",
+        content: "Hi, I’m PRIYA. What has been on your mind lately?",
+        outputType: "text",
+        interrupted: false,
+        safetyPhase: "normal",
+        createdAt: timestamp,
+      },
+    ],
   };
+}
+
+export function isGreeting(message: Message): boolean {
+  return message.id === GREETING_ID;
 }
 
 /** A conversation nobody actually said anything in isn't worth keeping. */
@@ -110,7 +107,7 @@ function hasContent(conversation: Conversation): boolean {
 }
 
 /** Used immediately, then replaced by the model's title when it arrives. */
-function fallbackTitle(conversation: Conversation): string {
+export function fallbackTitle(conversation: Conversation): string {
   const firstUser = conversation.messages.find(
     (message) => message.role === "user",
   );
@@ -136,7 +133,7 @@ async function upgradeTitle(conversation: Conversation): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: conversation.messages
-          .filter((message) => message.id !== "priya-greeting")
+          .filter((message) => !isGreeting(message))
           .map(({ role, content }) => ({ role, content })),
       }),
     });
@@ -154,38 +151,41 @@ async function upgradeTitle(conversation: Conversation): Promise<void> {
       return;
     }
 
-    const archive = state.archive.map((entry) =>
-      entry.conversation_id === conversation.conversation_id
-        ? {
-            ...entry,
-            title: title ?? entry.title,
-            summary: summary ?? entry.summary,
-          }
-        : entry,
-    );
+    const updated = {
+      ...conversation,
+      title: title ?? conversation.title,
+      summary: summary ?? conversation.summary,
+    };
 
-    write(ARCHIVE_KEY, archive);
-    emit({ ...state, archive });
+    await priyaStorage.saveConversation(updated);
+
+    emit({
+      ...state,
+      archive: state.archive.map((entry) =>
+        entry.id === updated.id ? updated : entry,
+      ),
+    });
   } catch {
     /* Keep the fallback. */
   }
 }
 
-function hydrate(): void {
+async function hydrate(): Promise<void> {
   if (hydrated || typeof window === "undefined") {
     return;
   }
 
   hydrated = true;
 
-  const stored = read<Conversation | null>(CONVERSATION_KEY, null);
-  let archive = read<Conversation[]>(ARCHIVE_KEY, []);
-
-  const previous =
-    stored && Array.isArray(stored.messages)
-      ? /* Records written before this field existed default to normal. */
-        { ...stored, safetyPhase: stored.safetyPhase ?? "normal" }
-      : null;
+  const [stored, archived, memories, preference, feedback, reports] =
+    await Promise.all([
+      priyaStorage.getActiveConversation(),
+      priyaStorage.getConversations(),
+      priyaStorage.getMemories(),
+      priyaStorage.getVoicePreference(),
+      priyaStorage.getFeedback(),
+      priyaStorage.getReports(),
+    ]);
 
   /* No marker means the app was reopened, not refreshed. */
   const isNewAppSession =
@@ -193,34 +193,29 @@ function hydrate(): void {
 
   window.sessionStorage.setItem(SESSION_KEY, "1");
 
-  let current: Conversation;
+  let conversation: Conversation;
+  let archive = archived;
   let toTitle: Conversation | null = null;
 
-  if (previous && isNewAppSession && hasContent(previous)) {
+  if (stored && isNewAppSession && hasContent(stored)) {
     /* Close the book on it and start fresh. */
-    const finished = { ...previous, title: fallbackTitle(previous) };
+    const finished: Conversation = {
+      ...stored,
+      title: stored.title ?? fallbackTitle(stored),
+      endedAt: now(),
+    };
 
-    archive = [finished, ...archive].slice(0, 100);
-    write(ARCHIVE_KEY, archive);
+    await priyaStorage.saveConversation(finished);
+    archive = [finished, ...archive];
 
-    current = createConversation(previous.mode);
-    write(CONVERSATION_KEY, current);
+    conversation = createConversation(stored.mode);
+    await priyaStorage.setActiveConversation(conversation);
     toTitle = finished;
   } else {
-    current = previous ?? createConversation("listen");
+    conversation = stored ?? createConversation("listen");
   }
 
-  emit({
-    conversation: current,
-    archive,
-    memories: read<Memory[]>(MEMORIES_KEY, []),
-    preferences: {
-      ...DEFAULT_VOICE_PREFERENCES,
-      ...read<Partial<VoicePreferences>>(PREFERENCES_KEY, {}),
-    },
-    feedback: read<Feedback[]>(FEEDBACK_KEY, []),
-    reports: read<ReportedResponse[]>(REPORTS_KEY, []),
-  });
+  emit({ conversation, archive, memories, preference, feedback, reports });
 
   if (toTitle) {
     /* Fire and forget; the list already shows the fallback. */
@@ -229,8 +224,8 @@ function hydrate(): void {
 }
 
 function subscribe(listener: () => void): () => void {
-  /* First subscriber pulls state out of localStorage. */
-  hydrate();
+  /* First subscriber pulls state out of storage. */
+  void hydrate();
   listeners.add(listener);
 
   return () => {
@@ -247,8 +242,9 @@ export function usePriyaStore(): StoreState {
 }
 
 function persistConversation(conversation: Conversation): void {
-  const stamped = { ...conversation, updatedAt: new Date().toISOString() };
-  write(CONVERSATION_KEY, stamped);
+  const stamped = { ...conversation, updatedAt: now() };
+
+  void priyaStorage.setActiveConversation(stamped);
   emit({ ...state, conversation: stamped });
 }
 
@@ -260,7 +256,32 @@ export function updateConversation(
   }
 }
 
-export function appendMessage(message: ChatMessage): void {
+/** Builds a message already carrying its conversation and phase. */
+export function createMessage(
+  role: Message["role"],
+  content: string,
+  options: {
+    inputType?: Channel;
+    outputType?: Channel;
+    interrupted?: boolean;
+  } = {},
+): Message {
+  const conversation = state.conversation;
+
+  return {
+    id: crypto.randomUUID(),
+    conversationId: conversation?.id ?? "unknown",
+    role,
+    content,
+    inputType: options.inputType,
+    outputType: options.outputType,
+    interrupted: options.interrupted ?? false,
+    safetyPhase: conversation?.safetyPhase ?? "normal",
+    createdAt: now(),
+  };
+}
+
+export function appendMessage(message: Message): void {
   updateConversation((conversation) => ({
     ...conversation,
     messages: [...conversation.messages, message],
@@ -272,31 +293,34 @@ export function setMode(mode: PriyaMode): void {
 }
 
 /** Files the current conversation away, if there's anything in it. */
-function archiveCurrent(): Conversation[] {
+async function archiveCurrent(): Promise<Conversation[]> {
   const current = state.conversation;
 
   if (!current || !hasContent(current)) {
     return state.archive;
   }
 
-  const finished = { ...current, title: current.title ?? fallbackTitle(current) };
-  const archive = [finished, ...state.archive].slice(0, 100);
+  const finished: Conversation = {
+    ...current,
+    title: current.title ?? fallbackTitle(current),
+    endedAt: now(),
+  };
 
-  write(ARCHIVE_KEY, archive);
+  await priyaStorage.saveConversation(finished);
 
   if (!current.title) {
     void upgradeTitle(finished);
   }
 
-  return archive;
+  return [finished, ...state.archive];
 }
 
 /** "Start a new conversation" — the old one is kept and titled, not discarded. */
-export function resetConversation(mode: PriyaMode): void {
-  const archive = archiveCurrent();
+export async function resetConversation(mode: PriyaMode): Promise<void> {
+  const archive = await archiveCurrent();
   const conversation = createConversation(mode);
 
-  write(CONVERSATION_KEY, conversation);
+  await priyaStorage.setActiveConversation(conversation);
   emit({ ...state, conversation, archive });
 }
 
@@ -304,85 +328,104 @@ export function resetConversation(mode: PriyaMode): void {
  * Reopens a past conversation. It comes out of the archive and becomes current
  * so it can be continued; it gets filed again when this session ends.
  */
-export function openConversation(id: string): void {
-  const target = state.archive.find(
-    (entry) => entry.conversation_id === id,
-  );
+export async function openConversation(id: string): Promise<void> {
+  const target = state.archive.find((entry) => entry.id === id);
 
   if (!target) {
     return;
   }
 
-  const archive = archiveCurrent().filter(
-    (entry) => entry.conversation_id !== id,
+  const archive = (await archiveCurrent()).filter(
+    (entry) => entry.id !== id,
   );
 
-  write(ARCHIVE_KEY, archive);
-  write(CONVERSATION_KEY, target);
+  await priyaStorage.deleteConversation(id);
+  await priyaStorage.setActiveConversation(target);
+
   emit({ ...state, conversation: target, archive });
 }
 
-export function deleteArchivedConversation(id: string): void {
-  const archive = state.archive.filter(
-    (entry) => entry.conversation_id !== id,
-  );
+export async function deleteArchivedConversation(id: string): Promise<void> {
+  await priyaStorage.deleteConversation(id);
 
-  write(ARCHIVE_KEY, archive);
-  emit({ ...state, archive });
+  emit({
+    ...state,
+    archive: state.archive.filter((entry) => entry.id !== id),
+  });
 }
 
 /**
  * The only way a memory is created. Callers pass text the user has seen and
  * explicitly approved — nothing is inferred and stored on its own.
  */
-export function approveMemory(summary: string, category = "general"): void {
+export async function approveMemory(
+  summary: string,
+  category: MemoryCategory = "general",
+): Promise<void> {
   const trimmed = summary.trim();
 
   if (!trimmed) {
     return;
   }
 
-  const memories = [
-    ...state.memories,
-    {
-      id: crypto.randomUUID(),
-      summary: trimmed,
-      category,
-      approved: true,
-      createdAt: new Date().toISOString(),
-    },
-  ];
+  const timestamp = now();
+  const memory: Memory = {
+    id: crypto.randomUUID(),
+    summary: trimmed,
+    category,
+    approved: true,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
 
-  write(MEMORIES_KEY, memories);
-  emit({ ...state, memories });
+  await priyaStorage.saveMemory(memory);
+  emit({ ...state, memories: [...state.memories, memory] });
 }
 
 /** Approved memories stay editable; a saved detail can go stale or be wrong. */
-export function editMemory(id: string, summary: string): void {
+export async function editMemory(
+  id: string,
+  summary: string,
+): Promise<void> {
   const trimmed = summary.trim();
+  const existing = state.memories.find((memory) => memory.id === id);
 
-  if (!trimmed) {
+  if (!trimmed || !existing) {
     return;
   }
 
-  const memories = state.memories.map((memory) =>
-    memory.id === id ? { ...memory, summary: trimmed } : memory,
-  );
+  const updated: Memory = {
+    ...existing,
+    summary: trimmed,
+    updatedAt: now(),
+  };
 
-  write(MEMORIES_KEY, memories);
-  emit({ ...state, memories });
+  await priyaStorage.updateMemory(updated);
+
+  emit({
+    ...state,
+    memories: state.memories.map((memory) =>
+      memory.id === id ? updated : memory,
+    ),
+  });
 }
 
-export function deleteMemory(id: string): void {
-  const memories = state.memories.filter((memory) => memory.id !== id);
+export async function deleteMemory(id: string): Promise<void> {
+  await priyaStorage.deleteMemory(id);
 
-  write(MEMORIES_KEY, memories);
-  emit({ ...state, memories });
+  emit({
+    ...state,
+    memories: state.memories.filter((memory) => memory.id !== id),
+  });
 }
 
-export function saveVoicePreferences(preferences: VoicePreferences): void {
-  write(PREFERENCES_KEY, preferences);
-  emit({ ...state, preferences });
+export async function saveVoicePreference(
+  preference: VoicePreference,
+): Promise<void> {
+  const stamped = { ...preference, updatedAt: now() };
+
+  await priyaStorage.saveVoicePreference(stamped);
+  emit({ ...state, preference: stamped });
 }
 
 /**
@@ -393,51 +436,80 @@ export function setSafetyPhase(safetyPhase: SafetyPhase): void {
   updateConversation((conversation) => ({ ...conversation, safetyPhase }));
 }
 
-export function saveFeedback(
-  entry: Omit<Feedback, "id" | "conversation_id" | "createdAt">,
-): void {
+/** An audit row, written whenever the classifier says anything but normal. */
+export async function recordSafetyEvent(
+  stateValue: SafetyState,
+  phase: SafetyPhase,
+  channel: Channel,
+  messageId?: string,
+): Promise<void> {
+  if (stateValue === "normal" && phase === "normal") {
+    return;
+  }
+
+  const event: SafetyEvent = {
+    id: crypto.randomUUID(),
+    conversationId: state.conversation?.id ?? "unknown",
+    messageId,
+    state: stateValue,
+    phase,
+    channel,
+    createdAt: now(),
+  };
+
+  await priyaStorage.saveSafetyEvent(event);
+}
+
+export async function saveFeedback(
+  entry: Omit<Feedback, "id" | "conversationId" | "createdAt">,
+): Promise<void> {
   if (!state.conversation) {
     return;
   }
 
-  const feedback = [
-    ...state.feedback,
-    {
-      ...entry,
-      id: crypto.randomUUID(),
-      conversation_id: state.conversation.conversation_id,
-      createdAt: new Date().toISOString(),
-    },
-  ];
+  const feedback: Feedback = {
+    ...entry,
+    id: crypto.randomUUID(),
+    conversationId: state.conversation.id,
+    createdAt: now(),
+  };
 
-  write(FEEDBACK_KEY, feedback);
-  emit({ ...state, feedback });
+  await priyaStorage.saveFeedback(feedback);
+  emit({ ...state, feedback: [...state.feedback, feedback] });
 }
 
-export function saveReport(messageId: string, content: string, reason: string): void {
+export async function saveReport(
+  messageId: string,
+  content: string,
+  reason: string,
+): Promise<void> {
   if (!state.conversation) {
     return;
   }
 
-  const reports = [
-    ...state.reports,
-    {
-      id: crypto.randomUUID(),
-      conversation_id: state.conversation.conversation_id,
-      messageId,
-      content,
-      reason,
-      createdAt: new Date().toISOString(),
-    },
-  ];
+  const report: Report = {
+    id: crypto.randomUUID(),
+    conversationId: state.conversation.id,
+    messageId,
+    content,
+    reason,
+    createdAt: now(),
+  };
 
-  write(REPORTS_KEY, reports);
-  emit({ ...state, reports });
+  await priyaStorage.saveReport(report);
+  emit({ ...state, reports: [...state.reports, report] });
 }
 
-function whenLabel(iso: string): string {
+/** Only approved memories are ever sent to the model. */
+export function approvedMemoryText(memories: Memory[]): string[] {
+  return memories
+    .filter((memory) => memory.approved)
+    .map((memory) => memory.summary);
+}
+
+export function whenLabel(iso: string, reference = Date.now()): string {
   const date = new Date(iso);
-  const days = Math.floor((Date.now() - date.getTime()) / 86_400_000);
+  const days = Math.floor((reference - date.getTime()) / 86_400_000);
 
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
@@ -457,8 +529,8 @@ function whenLabel(iso: string): string {
  * rather than dumping a raw transcript into the prompt.
  *
  * Newest first, capped: this rides along on every turn, so it has to stay
- * small. Once someone has hundreds of these, picking the relevant ones by
- * similarity beats taking the most recent.
+ * small. Once someone has hundreds, picking the relevant ones by similarity
+ * beats taking the most recent.
  */
 export function recalledConversations(
   archive: Conversation[],
@@ -474,9 +546,15 @@ export function recalledConversations(
     }));
 }
 
-/** Only approved memories are ever sent to the model. */
-export function approvedMemoryText(memories: Memory[]): string[] {
-  return memories
-    .filter((memory) => memory.approved)
-    .map((memory) => memory.summary);
+/** Development tools. */
+export async function exportAll() {
+  return priyaStorage.exportAll();
+}
+
+export async function clearAll(): Promise<void> {
+  await priyaStorage.clearAll();
+
+  hydrated = false;
+  emit(EMPTY_STATE);
+  void hydrate();
 }

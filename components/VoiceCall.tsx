@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { createMessage } from "@/lib/conversation-store";
 import { nextSafetyPhase } from "@/lib/safety-phase";
 import type {
-  ChatMessage,
+  Message,
   PriyaMode,
   RecalledConversation,
   SafetyPhase,
   SafetyState,
   SuggestedMemory,
-  VoicePreferences,
+  VoicePreference,
 } from "@/types/chat";
 import { isActiveSafetyPhase } from "@/types/chat";
 
@@ -25,14 +26,14 @@ export type VoiceStatus =
 type Props = {
   mode: PriyaMode;
   memories: string[];
-  preferences: VoicePreferences;
+  preferences: VoicePreference;
   /** Everything said so far, in either channel, to seed the session. */
-  history: ChatMessage[];
+  history: Message[];
   /** The conversation's phase. This component keeps no safety state of its own. */
   safetyPhase: SafetyPhase;
   /** Condensed earlier conversations, so voice has the same continuity. */
   recalled: RecalledConversation[];
-  onMessage: (message: ChatMessage) => void;
+  onMessage: (message: Message) => void;
   onSafetyPhase: (phase: SafetyPhase) => void;
   onSuggestMemory: (memory: SuggestedMemory) => void;
   onSwitchToText: () => void;
@@ -94,12 +95,18 @@ export default function VoiceCall({
   const phaseRef = useRef(safetyPhase);
   const historyRef = useRef(history);
   const memoriesRef = useRef(memories);
+  const modeRef = useRef(mode);
+  const preferencesRef = useRef(preferences);
+  const recalledRef = useRef(recalled);
 
   useEffect(() => {
     phaseRef.current = safetyPhase;
     historyRef.current = history;
     memoriesRef.current = memories;
-  }, [safetyPhase, history, memories]);
+    modeRef.current = mode;
+    preferencesRef.current = preferences;
+    recalledRef.current = recalled;
+  }, [safetyPhase, history, memories, mode, preferences, recalled]);
 
   const send = useCallback((event: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -166,6 +173,64 @@ export default function VoiceCall({
   }, [onSuggestMemory]);
 
   /**
+   * Rebuilds and reapplies the entire instruction set on a running call.
+   *
+   * A live session keeps whatever instructions it was created with, so any
+   * change the user makes mid-call — switching to Plan, approving a memory,
+   * changing how PRIYA sounds, resolving a crisis — would otherwise not reach
+   * her until the next call. Sending the whole set rather than a fragment is
+   * what makes it reversible.
+   */
+  const syncInstructions = useCallback(
+    async (phase: SafetyPhase = phaseRef.current) => {
+      const channel = channelRef.current;
+
+      if (channel?.readyState !== "open") {
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/realtime/instructions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: modeRef.current,
+            memories: memoriesRef.current,
+            preferences: preferencesRef.current,
+            safetyPhase: phase,
+            recalled: recalledRef.current,
+          }),
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const { instructions } = (await response.json()) as {
+          instructions: string;
+        };
+
+        send({
+          type: "session.update",
+          session: { type: "realtime", instructions },
+        });
+      } catch {
+        /* The session keeps its previous instructions; not worth interrupting. */
+      }
+    },
+    [send],
+  );
+
+  /*
+   * Anything PRIYA is told about gets pushed to the live session when it
+   * changes. safetyPhase is handled inside the gate instead, so that the new
+   * instructions are in place before the response is requested.
+   */
+  useEffect(() => {
+    void syncInstructions();
+  }, [mode, memories, preferences, recalled, syncInstructions]);
+
+  /**
    * The gate. The session sets create_response: false, so nothing is spoken
    * until this runs and explicitly asks for a reply. Every path either creates
    * a response after a verdict, or leaves the turn unanswered.
@@ -202,21 +267,17 @@ export default function VoiceCall({
       phaseRef.current = phase;
       onSafetyPhase(phase);
 
-      if (phase === "immediate_safety_check") {
-        send({
-          type: "session.update",
-          session: { type: "realtime", instructions: CRISIS_TURN },
-        });
-      } else if (isActiveSafetyPhase(phase)) {
-        send({
-          type: "session.update",
-          session: { type: "realtime", instructions: FOLLOW_UP_TURN },
-        });
-      }
+      /*
+       * Resend the whole instruction set rather than layering a crisis
+       * fragment on top. Layering was one-way: once a crisis fragment was
+       * applied there was nothing to put back, so a resolved conversation
+       * kept its crisis framing for the rest of the call.
+       */
+      await syncInstructions(phase);
 
       send({ type: "response.create" });
     },
-    [onSafetyPhase, send],
+    [onSafetyPhase, send, syncInstructions],
   );
 
   const disconnect = useCallback(() => {
@@ -275,13 +336,7 @@ export default function VoiceCall({
           setLiveUser("");
 
           if (transcript) {
-            onMessage({
-              id: crypto.randomUUID(),
-              role: "user",
-              content: transcript,
-              input_type: "voice",
-              createdAt: new Date().toISOString(),
-            });
+            onMessage(createMessage("user", transcript, { inputType: "voice" }));
 
             /* Nothing is spoken until this resolves. */
             setStatus("thinking");
@@ -314,14 +369,12 @@ export default function VoiceCall({
           const transcript = event.transcript?.trim();
 
           if (transcript) {
-            onMessage({
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: transcript,
-              output_type: "voice",
-              interrupted: interruptedRef.current || undefined,
-              createdAt: new Date().toISOString(),
-            });
+            onMessage(
+              createMessage("assistant", transcript, {
+                outputType: "voice",
+                interrupted: interruptedRef.current,
+              }),
+            );
           }
 
           interruptedRef.current = false;
@@ -621,28 +674,6 @@ export default function VoiceCall({
     </div>
   );
 }
-
-const CRISIS_TURN = `Their last message signalled they may be at risk of hurting themselves.
-Stop the ordinary conversation. Say plainly that their safety matters more than
-continuing, ask whether they are in immediate danger right now, and encourage
-them to reach someone who can be physically with them or a local crisis line.
-Be clear you are not an emergency service and cannot send anyone. Stay warm.`;
-
-const FOLLOW_UP_TURN = `This is still the conversation that followed a disclosure about
-self-harm. You've already named their safety and already pointed them toward
-help, and the crisis numbers are on their screen — repeating them now makes
-them feel processed rather than heard.
-
-This is the part where you stay. Warm, ordinary, present. Listen to what
-they're actually asking for; if they want reassurance rather than another
-safety question, give it — for someone who feels alone that is most of the
-work, not a detour from it.
-
-Don't recite hotlines again, don't ask about plans or access to means, don't
-treat a hesitant "I think so" as a reason to escalate, and don't narrate what
-you're doing. One question at most, and often none is better. Stay honest that
-you're an AI who can't be there in person. If they seem steadier and want to
-talk about something else, go with them.`;
 
 function StatusOrb({ status }: { status: VoiceStatus }) {
   const tone =

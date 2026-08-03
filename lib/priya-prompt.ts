@@ -2,7 +2,7 @@ import type {
   PriyaMode,
   RecalledConversation,
   SafetyPhase,
-  VoicePreferences,
+  VoiceDelivery,
 } from "@/types/chat";
 import { isActiveSafetyPhase } from "@/types/chat";
 
@@ -228,26 +228,26 @@ listed above isn't something you know, so there's nothing to fill in.
 ${safetyFollowUp ? SAFETY_FOLLOW_UP : ""}`;
 }
 
-const WARMTH_GUIDANCE: Record<VoicePreferences["warmth"], string> = {
+const WARMTH_GUIDANCE: Record<VoiceDelivery["warmth"], string> = {
   reserved: "Keep the warmth understated. Steady rather than effusive.",
   balanced: "Warm, without laying it on.",
   very_warm: "Let the warmth come through openly, in tone as much as words.",
 };
 
-const DIRECTNESS_GUIDANCE: Record<VoicePreferences["directness"], string> = {
+const DIRECTNESS_GUIDANCE: Record<VoiceDelivery["directness"], string> = {
   gentle: "Approach things softly. Give them room to arrive at it themselves.",
   balanced: "Kind, but say the real thing.",
   direct:
     "Get to the point. Skip the cushioning and trust them to handle it straight.",
 };
 
-const ENERGY_GUIDANCE: Record<VoicePreferences["energy"], string> = {
+const ENERGY_GUIDANCE: Record<VoiceDelivery["energy"], string> = {
   calm: "Unhurried. Leave pauses. Let the quiet do some work.",
   balanced: "An ordinary conversational energy.",
   upbeat: "Bring some life to it. Celebrate the good bits when they show up.",
 };
 
-const LENGTH_GUIDANCE: Record<VoicePreferences["responseLength"], string> = {
+const LENGTH_GUIDANCE: Record<VoiceDelivery["responseLength"], string> = {
   brief: "Keep turns short. A sentence or two is usually enough.",
   balanced: "Two or three sentences a turn, give or take.",
   thorough: "You can take a little longer when the subject earns it.",
@@ -258,7 +258,7 @@ const LENGTH_GUIDANCE: Record<VoicePreferences["responseLength"], string> = {
  * regardless of how these are set.
  */
 export function createVoiceDeliveryGuidance(
-  preferences: VoicePreferences,
+  preferences: VoiceDelivery,
 ): string {
   const nameLine =
     preferences.useName && preferences.name
@@ -285,7 +285,7 @@ These are about delivery. They don't loosen anything in WHERE THE LINE IS.
 export function createRealtimeInstructions(
   mode: PriyaMode,
   memories: string[],
-  preferences: VoicePreferences,
+  preferences: VoiceDelivery,
   safetyPhase: SafetyPhase = "normal",
   recalled: RecalledConversation[] = [],
 ): string {
