@@ -17,7 +17,12 @@ const requestSchema = z.object({
     )
     .min(1)
     .max(2000),
-  memories: z.array(z.string().max(500)).max(20).optional(),
+  /*
+   * Bounds the payload, not the user's memories. A cap they can actually
+   * reach would 400 every request until they deleted one — and memories
+   * persist, so it would brick the app permanently.
+   */
+  memories: z.array(z.string().max(500)).max(200).optional(),
 });
 
 /**
