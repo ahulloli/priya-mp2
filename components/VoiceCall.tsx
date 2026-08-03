@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createMessage } from "@/lib/conversation-store";
-import { nextSafetyPhase } from "@/lib/safety-phase";
+import {
+  canCreateSpokenResponse,
+  nextSafetyPhase,
+} from "@/lib/safety-phase";
 import type {
   Message,
   PriyaMode,
@@ -202,11 +205,11 @@ export default function VoiceCall({
    * what makes it reversible.
    */
   const syncInstructions = useCallback(
-    async (phase: SafetyPhase = phaseRef.current) => {
+    async (phase: SafetyPhase = phaseRef.current): Promise<boolean> => {
       const channel = channelRef.current;
 
       if (channel?.readyState !== "open") {
-        return;
+        return false;
       }
 
       try {
@@ -223,7 +226,7 @@ export default function VoiceCall({
         });
 
         if (!response.ok) {
-          return;
+          return false;
         }
 
         const { instructions } = (await response.json()) as {
@@ -234,8 +237,10 @@ export default function VoiceCall({
           type: "session.update",
           session: { type: "realtime", instructions },
         });
+
+        return true;
       } catch {
-        /* The session keeps its previous instructions; not worth interrupting. */
+        return false;
       }
     },
     [send],
@@ -293,7 +298,20 @@ export default function VoiceCall({
        * applied there was nothing to put back, so a resolved conversation
        * kept its crisis framing for the rest of the call.
        */
-      await syncInstructions(phase);
+      const applied = await syncInstructions(phase);
+
+      if (!canCreateSpokenResponse(phase, applied)) {
+        /*
+         * The crisis instructions never reached the session, so speaking now
+         * would answer a disclosure with ordinary conversational framing.
+         * Stay quiet and point at the panel, which is already on screen.
+         */
+        setSafetyWarning(
+          "PRIYA couldn’t safely prepare a spoken reply to that. Please use the support options on screen, or switch to text.",
+        );
+        setStatus("listening");
+        return;
+      }
 
       send({ type: "response.create" });
     },

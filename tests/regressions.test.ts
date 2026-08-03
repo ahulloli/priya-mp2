@@ -6,8 +6,10 @@ import {
   recordSafetyEvent,
 } from "@/lib/conversation-store";
 import { priyaStorage } from "@/lib/storage";
+import { canCreateSpokenResponse } from "@/lib/safety-phase";
 import { summaryWindow } from "@/lib/summary-window";
 import type { Message } from "@/types/chat";
+import { SAFETY_PHASES, isActiveSafetyPhase } from "@/types/chat";
 
 beforeEach(async () => {
   await clearAll();
@@ -163,5 +165,90 @@ describe("summary window", () => {
     /* The old behaviour ended at turn 11 and never saw the resolution. */
     expect(messages.slice(0, 12).at(-1)).toEqual(turn(11));
     expect(selected.at(-1)).toEqual(turn(39));
+  });
+});
+
+/*
+ * The bug: syncInstructions returned void on every failure path, and
+ * moderateThenRespond sent response.create regardless. On the turn a
+ * disclosure was detected, the crisis instructions could fail to apply and
+ * PRIYA would answer with the ordinary framing she already had.
+ */
+describe("spoken response gating", () => {
+  it("stays silent when crisis instructions did not apply", () => {
+    expect(canCreateSpokenResponse("immediate_safety_check", false)).toBe(
+      false,
+    );
+    expect(canCreateSpokenResponse("safety_follow_up", false)).toBe(false);
+  });
+
+  it("speaks once the crisis instructions are in place", () => {
+    expect(canCreateSpokenResponse("immediate_safety_check", true)).toBe(true);
+    expect(canCreateSpokenResponse("safety_follow_up", true)).toBe(true);
+  });
+
+  it("does not silence ordinary conversation over a failed resync", () => {
+    /* Stale framing on a normal turn is a nuisance, not a hazard. */
+    expect(canCreateSpokenResponse("normal", false)).toBe(true);
+    expect(canCreateSpokenResponse("supportive", false)).toBe(true);
+    expect(canCreateSpokenResponse("resolved", false)).toBe(true);
+  });
+
+  it("covers every phase", () => {
+    for (const phase of SAFETY_PHASES) {
+      expect(canCreateSpokenResponse(phase, true)).toBe(true);
+      expect(canCreateSpokenResponse(phase, false)).toBe(
+        !isActiveSafetyPhase(phase),
+      );
+    }
+  });
+});
+
+describe("safety event durability", () => {
+  it("reports failure instead of losing the record silently", async () => {
+    const original = priyaStorage.saveSafetyEvent;
+
+    priyaStorage.saveSafetyEvent = async () => {
+      throw new Error("network down");
+    };
+
+    const recorded = await recordSafetyEvent(
+      "high_risk",
+      "immediate_safety_check",
+      "voice",
+      "m1",
+    );
+
+    priyaStorage.saveSafetyEvent = original;
+
+    expect(recorded).toBe(false);
+  });
+
+  it("recovers when a later attempt succeeds", async () => {
+    const original = priyaStorage.saveSafetyEvent;
+    let attempts = 0;
+
+    priyaStorage.saveSafetyEvent = async (event) => {
+      attempts += 1;
+
+      if (attempts < 2) {
+        throw new Error("transient");
+      }
+
+      return original.call(priyaStorage, event);
+    };
+
+    const recorded = await recordSafetyEvent(
+      "high_risk",
+      "immediate_safety_check",
+      "text",
+      "m1",
+    );
+
+    priyaStorage.saveSafetyEvent = original;
+
+    expect(recorded).toBe(true);
+    expect(attempts).toBeGreaterThan(1);
+    expect(await priyaStorage.getSafetyEvents()).toHaveLength(1);
   });
 });

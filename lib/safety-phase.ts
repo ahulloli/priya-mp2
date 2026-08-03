@@ -32,6 +32,24 @@ export function nextSafetyPhase(
   return latest === "supportive" ? "supportive" : "normal";
 }
 
+/**
+ * Whether a spoken response may be created, given whether the instruction
+ * resync actually landed.
+ *
+ * A voice session keeps whatever instructions it last accepted. If the resync
+ * fails on an ordinary turn, PRIYA answers with slightly stale framing — a
+ * nuisance. If it fails on the turn a disclosure is detected, she answers a
+ * crisis with the instructions she had before it, which is the failure this
+ * whole gate exists to prevent. So the safety phases fail closed: no
+ * instructions, no response.
+ */
+export function canCreateSpokenResponse(
+  phase: SafetyPhase,
+  instructionsApplied: boolean,
+): boolean {
+  return instructionsApplied || !isActiveSafetyPhase(phase);
+}
+
 /** Whether PRIYA should be given the follow-up guidance this turn. */
 export function needsFollowUpGuidance(phase: SafetyPhase): boolean {
   return isActiveSafetyPhase(phase);

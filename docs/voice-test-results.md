@@ -65,6 +65,12 @@ failures:
   live session. Changing mode to Plan should change her behaviour without
   ending the call; resolving a crisis should return her to ordinary
   conversation rather than staying in follow-up.
+- **Silence on a disclosure.** A high-risk turn now fails closed: if the crisis
+  instructions cannot be applied to the running session, PRIYA says nothing and
+  shows a warning rather than answering with ordinary framing. If you see that
+  warning during scenario 10, the resync failed — record it, because the
+  alternative would have been her responding to a crisis as if nothing had
+  happened.
 
 ## Results
 

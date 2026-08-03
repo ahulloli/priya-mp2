@@ -436,15 +436,25 @@ export function setSafetyPhase(safetyPhase: SafetyPhase): void {
   updateConversation((conversation) => ({ ...conversation, safetyPhase }));
 }
 
-/** An audit row, written whenever the classifier says anything but normal. */
+/**
+ * An audit row, written whenever the classifier says anything but normal.
+ *
+ * Retries rather than writing once, and reports failure loudly instead of
+ * swallowing it. localStorage effectively cannot fail; a network-backed
+ * adapter can, and a safety record that silently vanished would be worse than
+ * one that never existed — the export would look clean.
+ *
+ * With Supabase this should become a durable queue that survives a reload,
+ * not just an in-memory retry.
+ */
 export async function recordSafetyEvent(
   stateValue: SafetyState,
   phase: SafetyPhase,
   channel: Channel,
   messageId?: string,
-): Promise<void> {
+): Promise<boolean> {
   if (stateValue === "normal" && phase === "normal") {
-    return;
+    return true;
   }
 
   const event: SafetyEvent = {
@@ -457,7 +467,23 @@ export async function recordSafetyEvent(
     createdAt: now(),
   };
 
-  await priyaStorage.saveSafetyEvent(event);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await priyaStorage.saveSafetyEvent(event);
+      return true;
+    } catch (error) {
+      if (attempt === 2) {
+        console.error("PRIYA failed to record a safety event:", error, event);
+        return false;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 200 * (attempt + 1)),
+      );
+    }
+  }
+
+  return false;
 }
 
 export async function saveFeedback(
