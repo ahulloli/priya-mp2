@@ -239,6 +239,8 @@ export type ChatRequest = {
 
 export type ChatResponse = {
   message: string;
+  /** What the classifier said about this turn, for the audit record. */
+  safetyState: SafetyState;
   safetyPhase: SafetyPhase;
   suggestMemory?: SuggestedMemory | null;
 };

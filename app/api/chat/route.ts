@@ -114,6 +114,7 @@ export async function POST(request: Request) {
     if (safetyState === "high_risk") {
       return NextResponse.json({
         message: CRISIS_MESSAGE,
+        safetyState,
         safetyPhase: phase,
         suggestMemory: null,
       });
@@ -167,6 +168,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       message: output,
+      safetyState,
       safetyPhase: phase,
       suggestMemory,
     });

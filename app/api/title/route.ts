@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { guardRequest } from "@/lib/rate-limit";
+import { summaryWindow } from "@/lib/summary-window";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -78,8 +79,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid request." }, { status: 400 });
     }
 
-    const transcript = parsed.data.messages
-      .slice(0, 12)
+    const transcript = summaryWindow(parsed.data.messages)
       .map((message) => `${message.role}: ${message.content}`)
       .join("\n");
 

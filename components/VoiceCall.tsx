@@ -34,7 +34,11 @@ type Props = {
   /** Condensed earlier conversations, so voice has the same continuity. */
   recalled: RecalledConversation[];
   onMessage: (message: Message) => void;
-  onSafetyPhase: (phase: SafetyPhase) => void;
+  onSafetyAssessment: (assessment: {
+    safetyState: SafetyState;
+    safetyPhase: SafetyPhase;
+    messageId: string;
+  }) => void;
   onSuggestMemory: (memory: SuggestedMemory) => void;
   onSwitchToText: () => void;
 };
@@ -64,7 +68,7 @@ export default function VoiceCall({
   safetyPhase,
   recalled,
   onMessage,
-  onSafetyPhase,
+  onSafetyAssessment,
   onSuggestMemory,
   onSwitchToText,
 }: Props) {
@@ -94,6 +98,13 @@ export default function VoiceCall({
    */
   const phaseRef = useRef(safetyPhase);
   const historyRef = useRef(history);
+  /*
+   * The transcript as this session actually saw it, appended to synchronously.
+   * historyRef only catches up after React has re-rendered the parent, which
+   * is too late: response.done can arrive first, and a memory proposal built
+   * from it would be missing the exchange that just happened.
+   */
+  const sessionHistoryRef = useRef<Message[]>(history);
   const memoriesRef = useRef(memories);
   const modeRef = useRef(mode);
   const preferencesRef = useRef(preferences);
@@ -107,6 +118,15 @@ export default function VoiceCall({
     preferencesRef.current = preferences;
     recalledRef.current = recalled;
   }, [safetyPhase, history, memories, mode, preferences, recalled]);
+
+  /** Records a spoken turn locally first, then hands it to the conversation. */
+  const recordVoiceMessage = useCallback(
+    (message: Message) => {
+      sessionHistoryRef.current = [...sessionHistoryRef.current, message];
+      onMessage(message);
+    },
+    [onMessage],
+  );
 
   const send = useCallback((event: Record<string, unknown>) => {
     const channel = channelRef.current;
@@ -148,7 +168,7 @@ export default function VoiceCall({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: historyRef.current.map(({ role, content }) => ({
+          messages: sessionHistoryRef.current.map(({ role, content }) => ({
             role,
             content,
           })),
@@ -236,7 +256,7 @@ export default function VoiceCall({
    * a response after a verdict, or leaves the turn unanswered.
    */
   const moderateThenRespond = useCallback(
-    async (text: string) => {
+    async (text: string, messageId: string) => {
       let safetyState: SafetyState;
 
       try {
@@ -265,7 +285,7 @@ export default function VoiceCall({
       const phase = nextSafetyPhase(phaseRef.current, safetyState);
 
       phaseRef.current = phase;
-      onSafetyPhase(phase);
+      onSafetyAssessment({ safetyState, safetyPhase: phase, messageId });
 
       /*
        * Resend the whole instruction set rather than layering a crisis
@@ -277,7 +297,7 @@ export default function VoiceCall({
 
       send({ type: "response.create" });
     },
-    [onSafetyPhase, send, syncInstructions],
+    [onSafetyAssessment, send, syncInstructions],
   );
 
   const disconnect = useCallback(() => {
@@ -336,11 +356,15 @@ export default function VoiceCall({
           setLiveUser("");
 
           if (transcript) {
-            onMessage(createMessage("user", transcript, { inputType: "voice" }));
+            const message = createMessage("user", transcript, {
+              inputType: "voice",
+            });
+
+            recordVoiceMessage(message);
 
             /* Nothing is spoken until this resolves. */
             setStatus("thinking");
-            void moderateThenRespond(transcript);
+            void moderateThenRespond(transcript, message.id);
           }
           break;
         }
@@ -369,7 +393,7 @@ export default function VoiceCall({
           const transcript = event.transcript?.trim();
 
           if (transcript) {
-            onMessage(
+            recordVoiceMessage(
               createMessage("assistant", transcript, {
                 outputType: "voice",
                 interrupted: interruptedRef.current,
@@ -412,7 +436,12 @@ export default function VoiceCall({
         }
       }
     },
-    [moderateThenRespond, onMessage, requestMemoryProposal, truncateSpokenTurn],
+    [
+      moderateThenRespond,
+      recordVoiceMessage,
+      requestMemoryProposal,
+      truncateSpokenTurn,
+    ],
   );
 
   /**
@@ -518,6 +547,8 @@ export default function VoiceCall({
       channelRef.current = channel;
 
       channel.onopen = () => {
+        /* The session starts from whatever the conversation already holds. */
+        sessionHistoryRef.current = historyRef.current;
         seedHistory();
         setStatus("listening");
       };

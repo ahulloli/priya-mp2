@@ -69,3 +69,20 @@ failures:
 ## Results
 
 _Nothing recorded yet._
+
+---
+
+## Open safety question — not a code issue
+
+The follow-up guidance in `lib/priya-prompt.ts` tells PRIYA not to ask about
+plan, method, or access to means, and not to treat a hesitant answer as grounds
+to escalate. That was written to stop a distressed person feeling processed
+into silence — a real failure mode we saw and fixed.
+
+It also diverges from means-restriction questioning, which is standard in
+several risk-assessment protocols. Which trade-off is right is a clinical
+judgement, not an engineering one.
+
+**This needs review by a licensed mental-health professional before anyone
+outside the team uses the product.** Same for the fixed crisis message in
+`lib/safety.ts`.

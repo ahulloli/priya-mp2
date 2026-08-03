@@ -20,6 +20,7 @@ import {
   editMemory,
   openConversation,
   recalledConversations,
+  recordSafetyEvent,
   resetConversation,
   saveFeedback,
   saveReport,
@@ -34,6 +35,7 @@ import type {
   MemoryCategory,
   PriyaMode,
   SafetyPhase,
+  SafetyState,
   SuggestedMemory,
 } from "@/types/chat";
 import { isActiveSafetyPhase } from "@/types/chat";
@@ -76,13 +78,27 @@ export default function HomePage() {
    */
   const [crisisPanelHidden, setCrisisPanelHidden] = useState(false);
 
-  const handleSafetyPhase = useCallback(
-    (phase: SafetyPhase) => {
+  /**
+   * One place both channels land: advance the phase, reopen the crisis panel
+   * if a disclosure is live, and write the audit row.
+   */
+  const handleSafetyAssessment = useCallback(
+    ({
+      safetyState,
+      safetyPhase: phase,
+      messageId,
+    }: {
+      safetyState: SafetyState;
+      safetyPhase: SafetyPhase;
+      messageId: string;
+    }) => {
       setSafetyPhase(phase);
 
       if (isActiveSafetyPhase(phase)) {
         setCrisisPanelHidden(false);
       }
+
+      void recordSafetyEvent(safetyState, phase, "voice", messageId);
     },
     [],
   );
@@ -155,7 +171,19 @@ export default function HomePage() {
         );
       }
 
-      handleSafetyPhase(data.safetyPhase);
+      setSafetyPhase(data.safetyPhase);
+
+      if (isActiveSafetyPhase(data.safetyPhase)) {
+        setCrisisPanelHidden(false);
+      }
+
+      void recordSafetyEvent(
+        data.safetyState,
+        data.safetyPhase,
+        "text",
+        userMessage.id,
+      );
+
       appendMessage(
         createMessage("assistant", data.message, { outputType: "text" }),
       );
@@ -373,7 +401,7 @@ export default function HomePage() {
                 safetyPhase={safetyPhase}
                 recalled={recalled}
                 onMessage={appendMessage}
-                onSafetyPhase={handleSafetyPhase}
+                onSafetyAssessment={handleSafetyAssessment}
                 onSuggestMemory={setPendingMemory}
                 onSwitchToText={switchToText}
               />

@@ -61,6 +61,20 @@ answered is the thing worth avoiding.
  * Appended for the turns that follow a high-risk disclosure. Dropping straight
  * back into ordinary conversation after someone says they want to die reads as
  * not having heard them.
+ *
+ * NEEDS CLINICAL REVIEW BEFORE VULNERABLE USERS SEE IT.
+ *
+ * The instructions below not to ask about plan, method or access to means, and
+ * not to treat a hesitant "I think so" as grounds to escalate, are a deliberate
+ * safety-design decision — not a tone preference. They were written to stop a
+ * distressed person feeling processed into silence, which is a real failure
+ * mode. But means-restriction questioning is also standard practice in several
+ * risk-assessment protocols, and the trade-off between the two is not a
+ * judgement anyone here is qualified to make alone.
+ *
+ * A licensed mental-health professional should review this block, and the
+ * fixed CRISIS_MESSAGE in lib/safety.ts, before anyone outside the team uses
+ * the product.
  */
 export const SAFETY_FOLLOW_UP = `
 WHAT JUST HAPPENED
