@@ -1,5 +1,6 @@
 import type {
   Conversation,
+  Message,
   Feedback,
   Memory,
   PriyaExport,
@@ -27,6 +28,19 @@ export interface PriyaStorage {
   getConversations(): Promise<Conversation[]>;
   saveConversation(conversation: Conversation): Promise<void>;
   deleteConversation(id: string): Promise<void>;
+
+  /*
+   * Granular writes, so a network adapter never has to replace an entire
+   * transcript to record one turn. Rewriting the whole conversation on every
+   * message is safe against localStorage and dangerous against a database:
+   * two in-flight writes can land out of order and the older one wins,
+   * silently dropping the newer messages.
+   */
+
+  /** Mode, title, summary, safety phase — everything except the messages. */
+  saveConversationMetadata(conversation: Conversation): Promise<void>;
+  /** Upsert one message by its stable id. */
+  saveMessage(message: Message): Promise<void>;
 
   getMemories(): Promise<Memory[]>;
   saveMemory(memory: Memory): Promise<void>;

@@ -7,6 +7,7 @@ import {
   clearAll,
   createMessage,
   deleteMemory,
+  flushWrites,
   editMemory,
   recalledConversations,
   resetConversation,
@@ -101,6 +102,9 @@ describe("messages", () => {
     appendMessage(createMessage("user", "typed", { inputType: "text" }));
     appendMessage(createMessage("user", "spoken", { inputType: "voice" }));
 
+    /* Writes are queued now, so wait for them to land. */
+    await flushWrites();
+
     const active = await priyaStorage.getActiveConversation();
     const said = active!.messages.filter((m) => m.role === "user");
 
@@ -113,12 +117,14 @@ describe("messages", () => {
 describe("feedback scoping", () => {
   it("attaches feedback to the conversation it was given in", async () => {
     appendMessage(createMessage("user", "first", { inputType: "text" }));
+    await flushWrites();
     const first = (await priyaStorage.getActiveConversation())!.id;
 
     await saveFeedback({ feltUnderstood: 5, helpful: 4, hasNextStep: true });
 
     await resetConversation("listen");
     appendMessage(createMessage("user", "second", { inputType: "text" }));
+    await flushWrites();
     const second = (await priyaStorage.getActiveConversation())!.id;
 
     await saveFeedback({ feltUnderstood: 2, helpful: 2, hasNextStep: false });

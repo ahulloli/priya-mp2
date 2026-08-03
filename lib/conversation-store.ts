@@ -177,15 +177,31 @@ async function hydrate(): Promise<void> {
 
   hydrated = true;
 
-  const [stored, archived, memories, preference, feedback, reports] =
-    await Promise.all([
-      priyaStorage.getActiveConversation(),
-      priyaStorage.getConversations(),
-      priyaStorage.getMemories(),
-      priyaStorage.getVoicePreference(),
-      priyaStorage.getFeedback(),
-      priyaStorage.getReports(),
-    ]);
+  let stored: Conversation | null = null;
+  let archived: Conversation[] = [];
+  let memories: Memory[] = [];
+  let preference: VoicePreference = DEFAULT_VOICE_PREFERENCE;
+  let feedback: Feedback[] = [];
+  let reports: Report[] = [];
+
+  try {
+    [stored, archived, memories, preference, feedback, reports] =
+      await Promise.all([
+        priyaStorage.getActiveConversation(),
+        priyaStorage.getConversations(),
+        priyaStorage.getMemories(),
+        priyaStorage.getVoicePreference(),
+        priyaStorage.getFeedback(),
+        priyaStorage.getReports(),
+      ]);
+  } catch (error) {
+    /*
+     * A failed read must not leave conversation null, which renders as a
+     * permanent "Loading…". Start an empty conversation instead: the person
+     * can still talk, and nothing already stored has been touched.
+     */
+    console.error("PRIYA could not load stored data:", error);
+  }
 
   /* No marker means the app was reopened, not refreshed. */
   const isNewAppSession =
@@ -211,8 +227,16 @@ async function hydrate(): Promise<void> {
     conversation = createConversation(stored.mode);
     await priyaStorage.setActiveConversation(conversation);
     toTitle = finished;
+  } else if (stored) {
+    conversation = stored;
   } else {
-    conversation = stored ?? createConversation("listen");
+    /*
+     * First run, or storage came back empty. Persist immediately: granular
+     * message writes attach to an existing conversation, so one that only
+     * exists in memory would silently swallow every turn.
+     */
+    conversation = createConversation("listen");
+    await priyaStorage.setActiveConversation(conversation);
   }
 
   emit({ conversation, archive, memories, preference, feedback, reports });
@@ -241,11 +265,42 @@ export function usePriyaStore(): StoreState {
   );
 }
 
+/*
+ * Conversation writes are chained rather than fired off independently.
+ *
+ * Against localStorage the difference is invisible, because writes complete
+ * synchronously. Against a database they are network requests, and two in
+ * flight can land out of order — an older transcript arriving after a newer
+ * one and overwriting it. Serialising them costs nothing here and prevents
+ * silent data loss once the adapter talks to Supabase.
+ */
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+/** Reports failure loudly; a write that vanished quietly is the bad outcome. */
+function enqueueWrite(write: () => Promise<unknown>, label: string): void {
+  writeQueue = writeQueue
+    .then(write)
+    .catch((error) => console.error(`PRIYA ${label} failed:`, error));
+}
+
+/** Waits for pending writes. Tests use this; the UI never needs to. */
+export function flushWrites(): Promise<unknown> {
+  return writeQueue;
+}
+
+/**
+ * Metadata only — mode, title, summary, safety phase. The transcript is
+ * persisted per message instead, so a metadata write can never clobber a
+ * message that landed after it was queued.
+ */
 function persistConversation(conversation: Conversation): void {
   const stamped = { ...conversation, updatedAt: now() };
 
-  void priyaStorage.setActiveConversation(stamped);
   emit({ ...state, conversation: stamped });
+  enqueueWrite(
+    () => priyaStorage.saveConversationMetadata(stamped),
+    "conversation metadata write",
+  );
 }
 
 export function updateConversation(
@@ -282,10 +337,20 @@ export function createMessage(
 }
 
 export function appendMessage(message: Message): void {
-  updateConversation((conversation) => ({
-    ...conversation,
-    messages: [...conversation.messages, message],
-  }));
+  if (!state.conversation) {
+    return;
+  }
+
+  const stamped = {
+    ...state.conversation,
+    messages: [...state.conversation.messages, message],
+    updatedAt: now(),
+  };
+
+  emit({ ...state, conversation: stamped });
+
+  /* One row, keyed on the message's own id — nothing else is rewritten. */
+  enqueueWrite(() => priyaStorage.saveMessage(message), "message write");
 }
 
 export function setMode(mode: PriyaMode): void {

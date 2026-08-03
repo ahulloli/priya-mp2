@@ -176,6 +176,50 @@ export class LocalStorageAdapter implements PriyaStorage {
     this.write(KEYS.conversations, remaining);
   }
 
+  /*
+   * localStorage has no rows, so both granular writes fold back into the
+   * whole-conversation blob. The point is that the *interface* is granular,
+   * which is what lets the Supabase adapter upsert a single row.
+   */
+  async saveConversationMetadata(conversation: Conversation): Promise<void> {
+    const active = await this.getActiveConversation();
+
+    if (active?.id === conversation.id) {
+      /* Keep whichever transcript is longer; metadata alone must not truncate. */
+      await this.setActiveConversation({
+        ...conversation,
+        messages:
+          active.messages.length > conversation.messages.length
+            ? active.messages
+            : conversation.messages,
+      });
+      return;
+    }
+
+    await this.saveConversation(conversation);
+  }
+
+  async saveMessage(message: Message): Promise<void> {
+    const active = await this.getActiveConversation();
+
+    if (active?.id !== message.conversationId) {
+      return;
+    }
+
+    const index = active.messages.findIndex(
+      (entry) => entry.id === message.id,
+    );
+    const messages = [...active.messages];
+
+    if (index >= 0) {
+      messages[index] = message;
+    } else {
+      messages.push(message);
+    }
+
+    await this.setActiveConversation({ ...active, messages });
+  }
+
   async getMemories(): Promise<Memory[]> {
     return this.read<LegacyMemory[]>(KEYS.memories, [])
       .map(migrateMemory)

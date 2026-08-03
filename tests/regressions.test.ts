@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  appendMessage,
   clearAll,
   createMessage,
+  flushWrites,
   recordSafetyEvent,
 } from "@/lib/conversation-store";
 import { priyaStorage } from "@/lib/storage";
@@ -250,5 +252,77 @@ describe("safety event durability", () => {
     expect(recorded).toBe(true);
     expect(attempts).toBeGreaterThan(1);
     expect(await priyaStorage.getSafetyEvents()).toHaveLength(1);
+  });
+});
+
+/*
+ * The bug: every conversation update fired an unawaited write. Against
+ * localStorage that is invisible, because writes complete synchronously.
+ * Against a database they are network requests, and two in flight can land
+ * out of order — an older transcript arriving last and overwriting a newer
+ * one.
+ */
+describe("conversation write ordering", () => {
+  it("serialises writes even when the adapter resolves out of order", async () => {
+    const original = priyaStorage.saveMessage;
+    const completed: string[] = [];
+    let call = 0;
+
+    /* First write is slow, second is instant — the classic reordering case. */
+    priyaStorage.saveMessage = async (message) => {
+      const delay = call++ === 0 ? 40 : 0;
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      completed.push(message.content);
+
+      return original.call(priyaStorage, message);
+    };
+
+    appendMessage(createMessage("user", "first", { inputType: "text" }));
+    appendMessage(createMessage("user", "second", { inputType: "text" }));
+
+    await flushWrites();
+    priyaStorage.saveMessage = original;
+
+    /* Unqueued, "second" would have completed before "first". */
+    expect(completed).toEqual(["first", "second"]);
+  });
+
+  it("keeps every message when writes are interleaved", async () => {
+    appendMessage(createMessage("user", "one", { inputType: "text" }));
+    appendMessage(createMessage("assistant", "two", { outputType: "text" }));
+    appendMessage(createMessage("user", "three", { inputType: "voice" }));
+
+    await flushWrites();
+
+    const stored = await priyaStorage.getActiveConversation();
+    const contents = stored!.messages
+      .filter((message) => message.id !== "priya-greeting")
+      .map((message) => message.content);
+
+    expect(contents).toEqual(["one", "two", "three"]);
+  });
+
+  it("survives a failing write without losing the in-memory conversation", async () => {
+    const original = priyaStorage.saveMessage;
+
+    priyaStorage.saveMessage = async () => {
+      throw new Error("network down");
+    };
+
+    appendMessage(createMessage("user", "still here", { inputType: "text" }));
+    await flushWrites();
+
+    priyaStorage.saveMessage = original;
+
+    /* The queue must not be poisoned by one rejection. */
+    appendMessage(createMessage("user", "and this", { inputType: "text" }));
+    await flushWrites();
+
+    const stored = await priyaStorage.getActiveConversation();
+
+    expect(
+      stored!.messages.some((message) => message.content === "and this"),
+    ).toBe(true);
   });
 });
