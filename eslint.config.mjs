@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    /*
+     * Scratch state written by `supabase start` — generated Deno bundles for
+     * the local edge runtime, not our source. Already gitignored.
+     */
+    "supabase/.temp/**",
+    "supabase/.branches/**",
   ]),
 ]);
 
