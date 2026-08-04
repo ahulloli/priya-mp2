@@ -305,3 +305,18 @@ grant select, insert on public.reports to authenticated;
 grant select, insert on public.safety_events to authenticated;
 
 grant select, insert, update on public.voice_preferences to authenticated;
+
+-- Supabase's default privileges hand `anon` TRUNCATE, TRIGGER and REFERENCES
+-- on everything created in public. No SELECT or INSERT, so data was never
+-- readable — but TRUNCATE bypasses RLS completely, and a privilege that can
+-- empty a table has no business belonging to the unauthenticated role.
+-- PostgREST does not expose TRUNCATE, so this is depth rather than a hole.
+
+revoke all on public.profiles from anon;
+revoke all on public.conversations from anon;
+revoke all on public.messages from anon;
+revoke all on public.memories from anon;
+revoke all on public.feedback from anon;
+revoke all on public.reports from anon;
+revoke all on public.safety_events from anon;
+revoke all on public.voice_preferences from anon;

@@ -6,6 +6,7 @@ import {
   createMessage,
   flushWrites,
   isGreeting,
+  readState,
   recordSafetyEvent,
 } from "@/lib/conversation-store";
 import { priyaStorage } from "@/lib/storage";
@@ -325,5 +326,47 @@ describe("conversation write ordering", () => {
     expect(
       stored!.messages.some((message) => message.content === "and this"),
     ).toBe(true);
+  });
+});
+
+/*
+ * The bug: a failed write only reached console.error. The conversation still
+ * looked saved on screen, so the person believed it was stored when it was
+ * not — the worst of the possible outcomes.
+ */
+describe("storage failure is visible", () => {
+  it("reports a failed write instead of pretending it saved", async () => {
+    const original = priyaStorage.saveMessage;
+
+    priyaStorage.saveMessage = async () => {
+      throw new Error("network down");
+    };
+
+    appendMessage(createMessage("user", "did this save?", { inputType: "text" }));
+    await flushWrites();
+
+    priyaStorage.saveMessage = original;
+
+    expect(readState().writeError).toBeTruthy();
+    expect(readState().writeError).toMatch(/couldn’t save/i);
+  });
+
+  it("clears the warning once a later write succeeds", async () => {
+    const original = priyaStorage.saveMessage;
+
+    priyaStorage.saveMessage = async () => {
+      throw new Error("network down");
+    };
+
+    appendMessage(createMessage("user", "first", { inputType: "text" }));
+    await flushWrites();
+    expect(readState().writeError).toBeTruthy();
+
+    priyaStorage.saveMessage = original;
+
+    appendMessage(createMessage("user", "second", { inputType: "text" }));
+    await flushWrites();
+
+    expect(readState().writeError).toBeNull();
   });
 });

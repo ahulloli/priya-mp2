@@ -46,6 +46,12 @@ const GREETING_PREFIX = "greeting_";
 
 export type StoreState = {
   conversation: Conversation | null;
+  /**
+   * Set when a write to storage failed. The UI surfaces this: silently
+   * dropping a write while the conversation still looks saved on screen is
+   * the worst outcome — the person believes it is stored and it is not.
+   */
+  writeError: string | null;
   /** Finished conversations, newest first. */
   archive: Conversation[];
   memories: Memory[];
@@ -57,6 +63,7 @@ export type StoreState = {
 /* Server and first client render share this, so hydration matches. */
 const EMPTY_STATE: StoreState = {
   conversation: null,
+  writeError: null,
   archive: [],
   memories: [],
   preference: DEFAULT_VOICE_PREFERENCE,
@@ -210,6 +217,11 @@ async function hydrate(): Promise<void> {
      * can still talk, and nothing already stored has been touched.
      */
     console.error("PRIYA could not load stored data:", error);
+    emit({
+      ...state,
+      writeError:
+        "PRIYA couldn’t load your earlier conversations. They aren’t lost — but nothing said now will be saved until this reconnects.",
+    });
   }
 
   /* No marker means the app was reopened, not refreshed. */
@@ -248,7 +260,15 @@ async function hydrate(): Promise<void> {
     await priyaStorage.setActiveConversation(conversation);
   }
 
-  emit({ conversation, archive, memories, preference, feedback, reports });
+  emit({
+    ...state,
+    conversation,
+    archive,
+    memories,
+    preference,
+    feedback,
+    reports,
+  });
 
   if (toTitle) {
     /* Fire and forget; the list already shows the fallback. */
@@ -289,7 +309,29 @@ let writeQueue: Promise<unknown> = Promise.resolve();
 function enqueueWrite(write: () => Promise<unknown>, label: string): void {
   writeQueue = writeQueue
     .then(write)
-    .catch((error) => console.error(`PRIYA ${label} failed:`, error));
+    .then(() => {
+      if (state.writeError) {
+        /* A later write got through, so the connection is back. */
+        emit({ ...state, writeError: null });
+      }
+    })
+    .catch((error) => {
+      console.error(`PRIYA ${label} failed:`, error);
+      emit({
+        ...state,
+        writeError:
+          "PRIYA couldn’t save that. What’s on screen may not be stored — check your connection and try again.",
+      });
+    });
+}
+
+/** Reads the store synchronously. Tests use this; the UI uses the hook. */
+export function readState(): StoreState {
+  return state;
+}
+
+export function clearWriteError(): void {
+  emit({ ...state, writeError: null });
 }
 
 /** Waits for pending writes. Tests use this; the UI never needs to. */

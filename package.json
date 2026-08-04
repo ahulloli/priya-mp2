@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:model": "vitest run --config vitest.model.config.mts"
+    "test:model": "vitest run --config vitest.model.config.mts",
+    "verify:supabase": "supabase db reset && supabase db lint --level error && supabase test db"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

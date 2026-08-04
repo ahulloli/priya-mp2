@@ -1,0 +1,5 @@
+# Schema dumps are safe to commit. Data dumps are not: they contain whatever
+# testers told PRIYA, which is the most sensitive material this project holds.
+*
+!.gitignore
+!priya-schema.sql

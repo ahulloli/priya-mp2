@@ -61,8 +61,15 @@ const MODES: Array<{ id: PriyaMode; title: string; description: string }> = [
 ];
 
 export default function HomePage() {
-  const { conversation, archive, memories, preference, feedback, reports } =
-    usePriyaStore();
+  const {
+    conversation,
+    archive,
+    memories,
+    preference,
+    feedback,
+    reports,
+    writeError,
+  } = usePriyaStore();
 
   const [channel, setChannel] = useState<"text" | "voice">("text");
   const [input, setInput] = useState("");
@@ -257,6 +264,15 @@ export default function HomePage() {
               ))}
             </div>
           </header>
+
+          {writeError && (
+            <p
+              role="alert"
+              className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-900"
+            >
+              {writeError}
+            </p>
+          )}
 
           <section className="flex-1 space-y-4 overflow-y-auto p-6">
             {isActiveSafetyPhase(safetyPhase) && !crisisPanelHidden && (
