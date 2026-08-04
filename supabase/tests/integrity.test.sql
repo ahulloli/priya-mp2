@@ -11,7 +11,7 @@ create extension if not exists pgtap with schema extensions;
 -- the path a browser actually takes.
 set local search_path to extensions, public, pg_catalog;
 
-select plan(9);
+select plan(12);
 
 insert into auth.users (id, email)
 values ('33333333-3333-3333-3333-333333333333', 'integrity@test.local');
@@ -104,6 +104,38 @@ select throws_ok(
   '23505',
   null,
   'a user cannot have two active conversations'
+);
+
+-- Deleting an account must take everything with it. Anything left behind is
+-- data belonging to someone who asked to be gone.
+insert into auth.users (id, email)
+values ('55555555-5555-5555-5555-555555555555', 'departing@test.local');
+
+insert into public.conversations (id, user_id, mode)
+values ('conv_gone', '55555555-5555-5555-5555-555555555555', 'listen');
+insert into public.messages (id, conversation_id, user_id, role, content)
+values ('msg_gone', 'conv_gone', '55555555-5555-5555-5555-555555555555',
+        'user', 'said in confidence');
+insert into public.memories (id, user_id, summary, approved)
+values ('mem_gone', '55555555-5555-5555-5555-555555555555', 'remembered', true);
+insert into public.safety_events (id, conversation_id, user_id, state, phase, channel)
+values ('se_gone', 'conv_gone', '55555555-5555-5555-5555-555555555555',
+        'supportive', 'supportive', 'text');
+
+delete from auth.users where id = '55555555-5555-5555-5555-555555555555';
+
+select is_empty(
+  $$select id from public.conversations
+    where user_id = '55555555-5555-5555-5555-555555555555'$$,
+  'deleting an account removes their conversations'
+);
+select is_empty(
+  $$select id from public.messages where id = 'msg_gone'$$,
+  'deleting an account removes their messages'
+);
+select is_empty(
+  $$select id from public.memories where id = 'mem_gone'$$,
+  'deleting an account removes their memories'
 );
 
 select * from finish();

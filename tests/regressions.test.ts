@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   appendMessage,
+  approveMemory,
+  approvedMemoryText,
   clearAll,
+  deleteMemory,
+  editMemory,
   createMessage,
   flushWrites,
   isGreeting,
@@ -368,5 +372,92 @@ describe("storage failure is visible", () => {
     await flushWrites();
 
     expect(readState().writeError).toBeNull();
+  });
+});
+
+/*
+ * Item 7 of the verification plan: ten rapid messages, and the stored order
+ * must match what the interface showed. The queue is what guarantees this —
+ * unserialised writes would land in completion order, not send order.
+ */
+describe("rapid message ordering", () => {
+  it("stores ten quick messages in the order they were sent", async () => {
+    const sent = Array.from({ length: 10 }, (_, i) => `message ${i}`);
+
+    for (const content of sent) {
+      appendMessage(createMessage("user", content, { inputType: "text" }));
+    }
+
+    await flushWrites();
+
+    const stored = await priyaStorage.getActiveConversation();
+    const contents = stored!.messages
+      .filter((message) => !isGreeting(message))
+      .map((message) => message.content);
+
+    expect(contents).toEqual(sent);
+  });
+
+  it("keeps stored order matching the in-memory order", async () => {
+    for (let i = 0; i < 10; i += 1) {
+      appendMessage(createMessage("user", `m${i}`, { inputType: "text" }));
+    }
+
+    await flushWrites();
+
+    const onScreen = readState()
+      .conversation!.messages.filter((m) => !isGreeting(m))
+      .map((m) => m.id);
+    const stored = (await priyaStorage.getActiveConversation())!.messages
+      .filter((m) => !isGreeting(m))
+      .map((m) => m.id);
+
+    expect(stored).toEqual(onScreen);
+  });
+
+  it("timestamps never go backwards", async () => {
+    for (let i = 0; i < 10; i += 1) {
+      appendMessage(createMessage("user", `t${i}`, { inputType: "text" }));
+    }
+
+    await flushWrites();
+
+    const times = (await priyaStorage.getActiveConversation())!.messages.map(
+      (m) => Date.parse(m.createdAt),
+    );
+
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+  });
+});
+
+describe("memory edits", () => {
+  it("moves updatedAt forward without touching createdAt", async () => {
+    await approveMemory("You have a cat.");
+    const [before] = await priyaStorage.getMemories();
+
+    /* Timestamps are millisecond-resolution ISO strings. */
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await editMemory(before.id, "You have two cats.");
+
+    const [after] = await priyaStorage.getMemories();
+
+    expect(after.summary).toBe("You have two cats.");
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(Date.parse(after.updatedAt)).toBeGreaterThan(
+      Date.parse(before.updatedAt),
+    );
+  });
+
+  it("stops influencing PRIYA once deleted", async () => {
+    await approveMemory("You have a cat.");
+    const [memory] = await priyaStorage.getMemories();
+
+    expect(approvedMemoryText(await priyaStorage.getMemories())).toContain(
+      "You have a cat.",
+    );
+
+    await deleteMemory(memory.id);
+
+    expect(approvedMemoryText(await priyaStorage.getMemories())).toEqual([]);
   });
 });
