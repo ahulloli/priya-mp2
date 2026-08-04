@@ -73,6 +73,8 @@ const EMPTY_STATE: StoreState = {
 
 let state: StoreState = EMPTY_STATE;
 let hydrated = false;
+/* Whose data is currently in memory, so a different account cannot inherit it. */
+let loadedFor: string | null = null;
 
 const listeners = new Set<() => void>();
 
@@ -186,12 +188,51 @@ async function upgradeTitle(conversation: Conversation): Promise<void> {
   }
 }
 
-async function hydrate(): Promise<void> {
-  if (hydrated || typeof window === "undefined") {
+/**
+ * Turns a Supabase error into something readable.
+ *
+ * PostgrestError and AuthError carry their detail on non-enumerable fields, so
+ * passing one straight to console.error prints "{}" — which is how this went
+ * unexplained for a while.
+ */
+function describe(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object") {
+    const e = error as Record<string, unknown>;
+    return (
+      [e.message, e.code, e.details, e.hint].filter(Boolean).join(" | ") ||
+      JSON.stringify(error)
+    );
+  }
+
+  return String(error);
+}
+
+/**
+ * Drops everything in memory. Called when the signed-in account changes: the
+ * store is a module singleton, so without this the next person to sign in on
+ * the same tab would be looking at the previous person's conversation.
+ */
+export function resetStore(): void {
+  hydrated = false;
+  loadedFor = null;
+  emit(EMPTY_STATE);
+}
+
+async function hydrate(userId: string | null = loadedFor): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (hydrated && loadedFor === userId) {
     return;
   }
 
   hydrated = true;
+  loadedFor = userId;
 
   let stored: Conversation | null = null;
   let archived: Conversation[] = [];
@@ -216,12 +257,22 @@ async function hydrate(): Promise<void> {
      * permanent "Loading…". Start an empty conversation instead: the person
      * can still talk, and nothing already stored has been touched.
      */
-    console.error("PRIYA could not load stored data:", error);
+    console.error("PRIYA could not load stored data:", describe(error));
+
+    /*
+     * Allow another attempt. Leaving this marked as loaded would strand the
+     * app in an empty state until a full page reload, even once the database
+     * came back.
+     */
+    hydrated = false;
+
     emit({
       ...state,
       writeError:
         "PRIYA couldn’t load your earlier conversations. They aren’t lost — but nothing said now will be saved until this reconnects.",
     });
+
+    return;
   }
 
   /* No marker means the app was reopened, not refreshed. */
@@ -316,13 +367,22 @@ function enqueueWrite(write: () => Promise<unknown>, label: string): void {
       }
     })
     .catch((error) => {
-      console.error(`PRIYA ${label} failed:`, error);
+      console.error(`PRIYA ${label} failed:`, describe(error));
       emit({
         ...state,
         writeError:
           "PRIYA couldn’t save that. What’s on screen may not be stored — check your connection and try again.",
       });
     });
+}
+
+/** Loads a specific account's data, replacing whatever is in memory. */
+export function hydrateFor(userId: string | null): void {
+  if (loadedFor !== userId) {
+    resetStore();
+  }
+
+  void hydrate(userId);
 }
 
 /** Reads the store synchronously. Tests use this; the UI uses the hook. */

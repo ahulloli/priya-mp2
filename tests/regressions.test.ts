@@ -11,6 +11,7 @@ import {
   flushWrites,
   isGreeting,
   readState,
+  resetStore,
   recordSafetyEvent,
 } from "@/lib/conversation-store";
 import { priyaStorage } from "@/lib/storage";
@@ -459,5 +460,43 @@ describe("memory edits", () => {
     await deleteMemory(memory.id);
 
     expect(approvedMemoryText(await priyaStorage.getMemories())).toEqual([]);
+  });
+});
+
+/*
+ * The bug: the store is a module singleton and `hydrated` was never reset, so
+ * signing out as one person and in as another on the same tab left the first
+ * person's conversation, memories and archive on screen. RLS kept the database
+ * safe; the interface was not.
+ */
+describe("store isolation between accounts", () => {
+  it("drops the previous account's data when the user changes", async () => {
+    appendMessage(createMessage("user", "A's private thought", { inputType: "text" }));
+    await approveMemory("A has a cat.");
+    await flushWrites();
+
+    expect(readState().conversation!.messages.some((m) => m.content.includes("A's private"))).toBe(true);
+    expect(readState().memories).toHaveLength(1);
+
+    resetStore();
+
+    expect(readState().conversation).toBeNull();
+    expect(readState().memories).toEqual([]);
+    expect(readState().archive).toEqual([]);
+    expect(readState().feedback).toEqual([]);
+  });
+
+  it("clears the write warning along with everything else", async () => {
+    const original = priyaStorage.saveMessage;
+    priyaStorage.saveMessage = async () => { throw new Error("down"); };
+
+    appendMessage(createMessage("user", "unsaved", { inputType: "text" }));
+    await flushWrites();
+    expect(readState().writeError).toBeTruthy();
+
+    priyaStorage.saveMessage = original;
+    resetStore();
+
+    expect(readState().writeError).toBeNull();
   });
 });

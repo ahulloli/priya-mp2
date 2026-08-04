@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { hydrateFor, resetStore } from "@/lib/conversation-store";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 
 type Status = "checking" | "signedIn" | "signedOut";
@@ -41,12 +42,24 @@ export default function AuthGate({
     supabase.auth.getUser().then(({ data }) => {
       setEmail(data.user?.email ?? null);
       setStatus(data.user ? "signedIn" : "signedOut");
+      /*
+       * The store is a module singleton, so it has to be told whose data it
+       * holds. Without this, signing out and back in as someone else on the
+       * same tab leaves the previous person's conversation on screen.
+       */
+      hydrateFor(data.user?.id ?? null);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         setEmail(session?.user.email ?? null);
         setStatus(session ? "signedIn" : "signedOut");
+
+        if (session?.user) {
+          hydrateFor(session.user.id);
+        } else {
+          resetStore();
+        }
       },
     );
 
