@@ -3,6 +3,13 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
+-- These run locally. `supabase test db --linked` does not work against a
+-- hosted project: pgTAP lives in the `extensions` schema there and the role
+-- the CLI connects as has no USAGE on it ("permission denied for schema
+-- extensions"). The migration is identical on both, verified by `db diff`,
+-- and the hosted database is checked through PostgREST instead — which is
+-- the path a browser actually takes.
+set local search_path to extensions, public, pg_catalog;
 
 select plan(9);
 

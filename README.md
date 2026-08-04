@@ -9,8 +9,9 @@ step. Text and voice.
 
 ## Status
 
-Phase 1 (text companion) and Phase 2 (voice) are built. The WebRTC audio loop
-needs a browser click-test; everything server-side is verified.
+Phase 1 (text companion) and Phase 2 (voice) are built, with Supabase for
+persistence and email/password auth. The WebRTC audio loop needs a browser
+click-test; everything server-side is verified.
 
 ## Running it
 
@@ -38,6 +39,7 @@ app/
   api/chat/route.ts               text turn: moderate -> generate
   api/moderate/route.ts           safety gate for voice transcripts
   api/realtime/session/route.ts   mints ephemeral WebRTC tokens
+  login/page.tsx                  email and password sign in
 components/
   VoiceCall.tsx                   WebRTC session, VAD states, interruption
   MemoryPanel.tsx                 approve / edit / delete what PRIYA remembers
@@ -48,15 +50,20 @@ lib/
   safety.ts                       one classifier shared by text and voice
   safety-phase.ts                 phase transitions, shared with the browser
   conversation-store.ts           shared conversation state
-  storage/                        the seam Supabase slots into
+  storage/                        PriyaStorage, and its two adapters
+  supabase/                       browser and cookie-based server clients
+supabase/
+  migrations/                     the schema, RLS policies, and grants
+  tests/                          pgTAP: schema, RLS isolation, integrity
 ```
 
 ### Storage
 
-Components and the store never touch `localStorage`. Everything goes through
-the `PriyaStorage` interface in `lib/storage/`, implemented today by
-`LocalStorageAdapter`. Connecting Supabase means writing one more adapter and
-changing one line in `lib/storage/index.ts` — no UI changes.
+Components and the store never touch storage directly. Everything goes through
+the `PriyaStorage` interface in `lib/storage/`, implemented by both
+`SupabaseStorageAdapter` and `LocalStorageAdapter`. Supabase is used when it is
+configured; otherwise the app falls back to `localStorage`, which keeps it
+runnable offline and is what the storage tests exercise.
 
 Records written before the shapes were finalised (`conversation_id`,
 snake_case message fields) are migrated on read, so existing test data
@@ -93,6 +100,33 @@ refreshes, and carries into a voice session opened mid-conversation. Only the
 user ends it, by pressing "I'm safe now" — hiding the crisis panel is a display
 choice and deliberately does not clear the phase.
 
+### Verifying the database
+
+```bash
+npm run verify:supabase   # db reset && db lint --level error && test db
+```
+
+63 pgTAP tests under `supabase/tests`: schema shape, foreign keys, RLS being
+enabled, constraint rejection, cascades, duplicate-id rejection, and the
+two-account isolation case. The isolation test runs as the `authenticated`
+role with a forged JWT claim — never the service role, which bypasses RLS and
+would pass the file trivially.
+
+`supabase test db --linked` does **not** work against a hosted project: pgTAP
+lives in the `extensions` schema there and the role the CLI connects as has no
+`USAGE` on it. The hosted database is checked through PostgREST instead, with
+two real accounts, which is the path a browser actually takes.
+
+**Grants differ between local and hosted, and that is not fully fixable.**
+Supabase's platform grants `authenticated` full CRUD on every table created in
+`public`. The `lock_down_privileges` migration revokes the excess so the local
+database holds exactly what PRIYA needs; on hosted the revoke does not stick,
+because the grants were made by a role the migration cannot revoke on behalf
+of. RLS is what enforces the intent there: `safety_events` has only `select`
+and `insert` policies, so a user attempting to delete or rewrite their own
+audit row changes nothing. That is verified against the hosted project, not
+assumed.
+
 ### Rate limiting
 
 `/api/chat`, `/api/moderate`, `/api/realtime/session` and `/api/memory-proposal`
@@ -116,9 +150,11 @@ Spoken turns propose memories too, via `/api/memory-proposal`.
 
 ## Not built yet
 
-**Authentication and Supabase.** Conversations, memories, feedback and reports
-all live in `localStorage`. Fine for solo testing, not for an invite-only beta,
-and the rate limiter needs real per-user quotas behind a session.
+The rate limiter is still per-IP and in-process; with auth in place it should
+become per-user quotas behind a shared store.
+
+Local data is not migrated into Supabase. Anything already in a browser stays
+there — export it from the app first if you want it.
 
 Also unbuilt: the optional voice features — voice notes, guided reflection,
 interview practice, check-ins.
