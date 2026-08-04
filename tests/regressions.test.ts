@@ -12,6 +12,8 @@ import {
   isGreeting,
   readState,
   resetStore,
+  setMode,
+  updateConversation,
   recordSafetyEvent,
 } from "@/lib/conversation-store";
 import { priyaStorage } from "@/lib/storage";
@@ -498,5 +500,63 @@ describe("store isolation between accounts", () => {
     resetStore();
 
     expect(readState().writeError).toBeNull();
+  });
+});
+
+/*
+ * The bug: splitting persistence into metadata and per-message writes left a
+ * trap. A caller that added a message through updateConversation got the
+ * conversation row updated and the message silently dropped. Every user
+ * message went that way, so the database held only PRIYA's replies — the
+ * transcript on screen looked complete and the stored one was half missing.
+ */
+describe("every message reaches storage", () => {
+  it("persists a message added through updateConversation", async () => {
+    const message = createMessage("user", "typed by hand", {
+      inputType: "text",
+    });
+
+    updateConversation((current) => ({
+      ...current,
+      messages: [...current.messages, message],
+    }));
+
+    await flushWrites();
+
+    const stored = await priyaStorage.getActiveConversation();
+
+    expect(stored!.messages.some((m) => m.id === message.id)).toBe(true);
+  });
+
+  it("stores both halves of an exchange", async () => {
+    appendMessage(createMessage("user", "I feel stuck", { inputType: "text" }));
+    appendMessage(
+      createMessage("assistant", "Say more?", { outputType: "text" }),
+    );
+
+    await flushWrites();
+
+    const roles = (await priyaStorage.getActiveConversation())!.messages
+      .filter((m) => !isGreeting(m))
+      .map((m) => m.role);
+
+    /* The failure looked exactly like this list missing "user". */
+    expect(roles).toEqual(["user", "assistant"]);
+  });
+
+  it("does not rewrite a message that was already stored", async () => {
+    const message = createMessage("user", "once", { inputType: "text" });
+
+    appendMessage(message);
+    await flushWrites();
+
+    /* A later metadata change must not duplicate it. */
+    setMode("plan");
+    await flushWrites();
+
+    const stored = await priyaStorage.getActiveConversation();
+    const matches = stored!.messages.filter((m) => m.id === message.id);
+
+    expect(matches).toHaveLength(1);
   });
 });

@@ -407,10 +407,30 @@ export function flushWrites(): Promise<unknown> {
 function persistConversation(conversation: Conversation): void {
   const stamped = { ...conversation, updatedAt: now() };
 
+  /*
+   * Any message this update introduced has to be written too.
+   *
+   * Splitting persistence into metadata and per-message writes left a trap:
+   * a caller that added a message through updateConversation got the row
+   * updated and the message silently dropped. That is exactly what happened
+   * to every user message — the transcript on screen looked complete while
+   * the database held only PRIYA's replies. Diffing here closes the whole
+   * class rather than the one call site that hit it.
+   */
+  const known = new Set(
+    (state.conversation?.messages ?? []).map((message) => message.id),
+  );
+  const added = stamped.messages.filter((message) => !known.has(message.id));
+
   emit({ ...state, conversation: stamped });
+
   enqueueWrite(
     () => priyaStorage.saveConversationMetadata(stamped),
     "conversation metadata write",
+  );
+
+  added.forEach((message) =>
+    enqueueWrite(() => priyaStorage.saveMessage(message), "message write"),
   );
 }
 

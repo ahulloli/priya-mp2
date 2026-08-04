@@ -146,10 +146,8 @@ export default function HomePage() {
 
     const nextMessages = [...messages, userMessage];
 
-    updateConversation((current) => ({
-      ...current,
-      messages: nextMessages,
-    }));
+    /* appendMessage persists the row; updateConversation only writes metadata. */
+    appendMessage(userMessage);
     setInput("");
     setError("");
     setIsLoading(true);
@@ -201,11 +199,11 @@ export default function HomePage() {
       }
     } catch (caughtError) {
       /*
-       * Take the message back out. Leaving a failed send in the record stacks
-       * up unanswered user turns and makes every retry a longer request.
+       * The message stays. They did say it, and it is already stored — taking
+       * it back out of the view would leave the screen disagreeing with the
+       * database. The draft is not restored either, or sending again would
+       * duplicate it.
        */
-      updateConversation((current) => ({ ...current, messages }));
-      setInput(cleanInput);
       setError(
         caughtError instanceof Error
           ? caughtError.message
