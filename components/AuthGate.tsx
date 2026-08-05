@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { hydrateFor, resetStore } from "@/lib/conversation-store";
+import { useSupabaseClient } from "@/lib/storage";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 
 type Status = "checking" | "signedIn" | "signedOut";
@@ -38,6 +39,12 @@ export default function AuthGate({
     }
 
     const supabase = createClient();
+
+    /*
+     * Give the storage layer this client — the one that actually holds the
+     * session — before anything tries to read.
+     */
+    useSupabaseClient(supabase);
 
     supabase.auth.getUser().then(({ data }) => {
       setEmail(data.user?.email ?? null);

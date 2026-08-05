@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { LocalStorageAdapter } from "./local-storage-adapter";
 import { SupabaseStorageAdapter } from "./supabase-adapter";
 import type { PriyaStorage } from "./types";
@@ -19,6 +21,25 @@ const useSupabase = Boolean(
 );
 
 let adapter: PriyaStorage | null = null;
+
+/**
+ * Hands the storage layer the exact authenticated client to use.
+ *
+ * Constructing its own was the bug: the adapter's client had no session, so
+ * every query left with the publishable key as its bearer token and arrived as
+ * the anonymous role. The database refused it, the app concluded the person
+ * had no conversation, and started a new one — quietly fragmenting their
+ * history one sign-in at a time. Taking the client that already signed in
+ * removes the possibility of the two disagreeing.
+ */
+export function useSupabaseClient(client: SupabaseClient): void {
+  adapter = new SupabaseStorageAdapter(client);
+}
+
+/** Falls back to browser-local storage, e.g. after signing out. */
+export function useLocalStorage(): void {
+  adapter = new LocalStorageAdapter();
+}
 
 function resolveAdapter(): PriyaStorage {
   if (!adapter) {

@@ -107,6 +107,17 @@ export class SupabaseStorageAdapter implements PriyaStorage {
     return user.id;
   }
 
+  /**
+   * Ensures the client has read its session before any query goes out.
+   *
+   * Without this the first request can leave before auth has loaded from
+   * cookies, arriving at PostgREST with no bearer token — which reads as the
+   * anonymous role and is refused.
+   */
+  private async ready(): Promise<void> {
+    await this.supabase.auth.getSession();
+  }
+
   private async messagesFor(conversationId: string): Promise<Message[]> {
     const { data, error } = await this.supabase
       .from("messages")
@@ -122,6 +133,8 @@ export class SupabaseStorageAdapter implements PriyaStorage {
   }
 
   async getActiveConversation(): Promise<Conversation | null> {
+    await this.ready();
+
     const { data, error } = await this.supabase
       .from("conversations")
       .select("*")
@@ -220,6 +233,8 @@ export class SupabaseStorageAdapter implements PriyaStorage {
   }
 
   async getConversations(): Promise<Conversation[]> {
+    await this.ready();
+
     const { data, error } = await this.supabase
       .from("conversations")
       .select("*")
@@ -285,6 +300,8 @@ export class SupabaseStorageAdapter implements PriyaStorage {
   }
 
   async getMemories(): Promise<Memory[]> {
+    await this.ready();
+
     const { data, error } = await this.supabase
       .from("memories")
       .select("*")
@@ -348,6 +365,8 @@ export class SupabaseStorageAdapter implements PriyaStorage {
   }
 
   async getFeedback(): Promise<Feedback[]> {
+    await this.ready();
+
     const { data, error } = await this.supabase.from("feedback").select("*");
 
     if (error) {
@@ -383,6 +402,8 @@ export class SupabaseStorageAdapter implements PriyaStorage {
   }
 
   async getReports(): Promise<Report[]> {
+    await this.ready();
+
     const { data, error } = await this.supabase.from("reports").select("*");
 
     if (error) {
@@ -454,6 +475,8 @@ export class SupabaseStorageAdapter implements PriyaStorage {
   }
 
   async getVoicePreference(): Promise<VoicePreference> {
+    await this.ready();
+
     const { data, error } = await this.supabase
       .from("voice_preferences")
       .select("*")

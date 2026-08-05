@@ -28,7 +28,6 @@ import {
   saveVoicePreference,
   setMode,
   setSafetyPhase,
-  updateConversation,
   usePriyaStore,
 } from "@/lib/conversation-store";
 import type {
