@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:model": "vitest run --config vitest.model.config.mts",
-    "verify:supabase": "supabase db reset && supabase db lint --level error && supabase test db"
+    "verify:supabase": "supabase db reset && supabase db lint --level error && supabase test db",
+    "backup:local": "mkdir -p \"$HOME/PRIYA-private-backups\" && chmod 700 \"$HOME/PRIYA-private-backups\" && supabase db dump --local --schema public --data-only --use-copy --file \"$HOME/PRIYA-private-backups/priya-local-$(date +%Y-%m-%d_%H-%M-%S).sql\"",
+    "backup:hosted": "mkdir -p \"$HOME/PRIYA-private-backups\" && chmod 700 \"$HOME/PRIYA-private-backups\" && supabase db dump --linked --schema public --data-only --use-copy --file \"$HOME/PRIYA-private-backups/priya-hosted-$(date +%Y-%m-%d_%H-%M-%S).sql\""
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
