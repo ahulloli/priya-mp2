@@ -242,20 +242,38 @@ async function hydrate(userId: string | null = loadedFor): Promise<void> {
   let reports: Report[] = [];
 
   try {
-    [stored, archived, memories, preference, feedback, reports] =
-      await Promise.all([
-        priyaStorage.getActiveConversation(),
-        priyaStorage.getConversations(),
-        priyaStorage.getMemories(),
-        priyaStorage.getVoicePreference(),
-        priyaStorage.getFeedback(),
-        priyaStorage.getReports(),
-      ]);
+    /*
+     * Read through the server when Supabase is in play. The browser client's
+     * session is not reliably attached at this point — reads were arriving as
+     * the anonymous role — whereas the server client takes its session from
+     * the request cookies and cannot race.
+     */
+    const bootstrapped = await bootstrapFromServer();
+
+    if (bootstrapped) {
+      ({ stored, archived, memories, preference, feedback, reports } =
+        bootstrapped);
+    } else {
+      [stored, archived, memories, preference, feedback, reports] =
+        await Promise.all([
+          priyaStorage.getActiveConversation(),
+          priyaStorage.getConversations(),
+          priyaStorage.getMemories(),
+          priyaStorage.getVoicePreference(),
+          priyaStorage.getFeedback(),
+          priyaStorage.getReports(),
+        ]);
+    }
   } catch (error) {
     /*
      * A failed read must not leave conversation null, which renders as a
      * permanent "Loading…". Start an empty conversation instead: the person
      * can still talk, and nothing already stored has been touched.
+     */
+    /*
+     * A failed read is a failed read. It is not "this person has no
+     * conversations", and treating it that way archived the conversation they
+     * were in and started an empty one — every sign-in, silently.
      */
     console.error("PRIYA could not load stored data:", describe(error));
 
@@ -374,6 +392,135 @@ function enqueueWrite(write: () => Promise<unknown>, label: string): void {
           "PRIYA couldn’t save that. What’s on screen may not be stored — check your connection and try again.",
       });
     });
+}
+
+type Bootstrapped = {
+  stored: Conversation | null;
+  archived: Conversation[];
+  memories: Memory[];
+  preference: VoicePreference;
+  feedback: Feedback[];
+  reports: Report[];
+};
+
+function rowToMessage(row: Record<string, unknown>): Message {
+  return {
+    id: row.id as string,
+    conversationId: row.conversation_id as string,
+    role: row.role as Message["role"],
+    content: row.content as string,
+    inputType: (row.input_type as Message["inputType"]) ?? undefined,
+    outputType: (row.output_type as Message["outputType"]) ?? undefined,
+    interrupted: Boolean(row.interrupted),
+    safetyPhase: row.safety_phase as Message["safetyPhase"],
+    createdAt: row.created_at as string,
+  };
+}
+
+function rowToConversation(
+  row: Record<string, unknown>,
+  messages: Message[],
+): Conversation {
+  return {
+    id: row.id as string,
+    mode: row.mode as Conversation["mode"],
+    title: (row.title as string) ?? undefined,
+    summary: (row.summary as string) ?? undefined,
+    messages,
+    safetyPhase: row.safety_phase as Conversation["safetyPhase"],
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+    endedAt: (row.ended_at as string) ?? undefined,
+  };
+}
+
+/**
+ * Startup read, performed by the server under the user's own JWT.
+ *
+ * Returns null when Supabase is not configured, so the local adapter is used
+ * instead. Throws on a real failure — the caller must not mistake that for an
+ * empty account.
+ */
+async function bootstrapFromServer(): Promise<Bootstrapped | null> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    return null;
+  }
+
+  const response = await fetch("/api/bootstrap", {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  if (response.status === 401) {
+    /* Signed out. Not an error, and not data either. */
+    return {
+      stored: null,
+      archived: [],
+      memories: [],
+      preference: DEFAULT_VOICE_PREFERENCE,
+      feedback: [],
+      reports: [],
+    };
+  }
+
+  const body = await response.json();
+
+  if (!response.ok) {
+    throw new Error(body.error ?? `Bootstrap failed (${response.status})`);
+  }
+
+  const messages = (body.activeMessages as Record<string, unknown>[]).map(
+    rowToMessage,
+  );
+
+  return {
+    stored: body.activeConversation
+      ? rowToConversation(body.activeConversation, messages)
+      : null,
+    archived: (body.archivedConversations as Record<string, unknown>[]).map(
+      (row) => rowToConversation(row, []),
+    ),
+    memories: (body.memories as Record<string, unknown>[]).map((row) => ({
+      id: row.id as string,
+      summary: row.summary as string,
+      category: row.category as Memory["category"],
+      approved: Boolean(row.approved),
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    })),
+    preference: body.voicePreference
+      ? {
+          id: body.voicePreference.user_id,
+          voice: body.voicePreference.voice,
+          pace: Number(body.voicePreference.pace),
+          warmth: body.voicePreference.warmth,
+          directness: body.voicePreference.directness,
+          energy: body.voicePreference.energy,
+          responseLength: body.voicePreference.response_length,
+          silenceMs: body.voicePreference.silence_ms,
+          useName: Boolean(body.voicePreference.use_name),
+          name: body.voicePreference.name ?? undefined,
+          updatedAt: body.voicePreference.updated_at,
+        }
+      : DEFAULT_VOICE_PREFERENCE,
+    feedback: (body.feedback as Record<string, unknown>[]).map((row) => ({
+      id: row.id as string,
+      conversationId: row.conversation_id as string,
+      feltUnderstood: row.felt_understood as number,
+      helpful: row.helpful as number,
+      hasNextStep: Boolean(row.has_next_step),
+      comments: (row.comments as string) ?? undefined,
+      createdAt: row.created_at as string,
+    })),
+    reports: (body.reports as Record<string, unknown>[]).map((row) => ({
+      id: row.id as string,
+      conversationId: row.conversation_id as string,
+      messageId: row.message_id as string,
+      content: row.content as string,
+      reason: row.reason as string,
+      createdAt: row.created_at as string,
+    })),
+  };
 }
 
 /** Loads a specific account's data, replacing whatever is in memory. */

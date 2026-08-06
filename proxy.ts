@@ -6,11 +6,14 @@ import { createServerClient } from "@supabase/ssr";
  * Refreshes the Supabase session on every request and writes the rotated
  * cookies back onto the response.
  *
+ * Named `proxy` rather than `middleware`: Next 16 deprecated the middleware
+ * convention and renamed both the file and the exported function.
+ *
  * Server Components cannot set cookies, so without this an expired token
  * would keep failing until the user reloaded hard enough to hit a Route
  * Handler. It does not gate access — RLS does that.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

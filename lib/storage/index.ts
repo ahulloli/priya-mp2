@@ -32,12 +32,12 @@ let adapter: PriyaStorage | null = null;
  * history one sign-in at a time. Taking the client that already signed in
  * removes the possibility of the two disagreeing.
  */
-export function useSupabaseClient(client: SupabaseClient): void {
+export function setSupabaseClient(client: SupabaseClient): void {
   adapter = new SupabaseStorageAdapter(client);
 }
 
 /** Falls back to browser-local storage, e.g. after signing out. */
-export function useLocalStorage(): void {
+export function setLocalStorage(): void {
   adapter = new LocalStorageAdapter();
 }
 
